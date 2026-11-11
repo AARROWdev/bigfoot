@@ -4,7 +4,7 @@
 
 ## What it does
 - **Fast scan** of any drive or folder (multi-threaded, live progress, tree fills in as it scans)
-- **Biggest-first tree:** size, % of parent bar, files, folders, newest modified date. Click any column to sort.
+- **Biggest-first tree:** size, % of drive bar, files, folders, newest modified date. Click any column to sort.
 - **Map:** treemap of the selected folder, colored by file type. Click to find it in the tree, double-click a folder to zoom in, right-click or Up to zoom out.
 - **Types:** space by extension and category (video, audio, images, archives, disk images, programs, documents, code)
 - **Top 100 files:** the biggest files under the selected folder

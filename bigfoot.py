@@ -1,4 +1,5 @@
 """Bigfoot - find what's eating your disk. Fast scan, biggest-first tree, treemap, type breakdown, top files."""
+import gc
 import heapq
 import os
 import queue
@@ -19,7 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFile
 from PySide6.QtCore import QFile
 
 APP = "Bigfoot"
-VERSION = "1.0"
+VERSION = "1.1"
 ACCENT = "#2f9bff"
 
 # ---------------------------------------------------------------- file types
@@ -143,7 +144,6 @@ class Scanner(QObject):
         for _ in self.workers:
             self.q.put(None)
         self.t1 = time.time()
-        retotal(self.root)
         self.finished.emit()
 
     def _work(self):
@@ -192,7 +192,7 @@ class Scanner(QObject):
 
 
 # ---------------------------------------------------------------- model
-COLS = ["Name", "Size", "% of parent", "Files", "Folders", "Modified"]
+COLS = ["Name", "Size", "% of drive", "Files", "Folders", "Modified"]
 C_NAME, C_SIZE, C_PCT, C_FILES, C_DIRS, C_MOD = range(6)
 
 
@@ -202,6 +202,7 @@ class TreeModel(QAbstractItemModel):
         self.root = None
         self.sort_col, self.desc = C_SIZE, True
         self.show_files = True
+        self.drive_total = 0
         self.gen = 0
         ip = QFileIconProvider()
         self.ic_dir = ip.icon(QFileIconProvider.Folder)
@@ -216,7 +217,7 @@ class TreeModel(QAbstractItemModel):
 
     def kids(self, d):
         if d._kids is None or d._kids[0] != self.gen:
-            items = d.dirs + d.files if self.show_files else list(d.dirs)
+            items = list(d.dirs) + list(d.files) if self.show_files else list(d.dirs)
             c = self.sort_col
             if c == C_NAME:
                 key = lambda x: x.name.lower()
@@ -272,7 +273,7 @@ class TreeModel(QAbstractItemModel):
         it = parent.internalPointer()
         if not it.is_dir:
             return 0
-        return len(it.dirs) + (len(it.files) if self.show_files else 0)
+        return len(self.kids(it))
 
     def hasChildren(self, parent=QModelIndex()):
         return self.rowCount(parent) > 0
@@ -287,10 +288,8 @@ class TreeModel(QAbstractItemModel):
             return int(Qt.AlignRight | Qt.AlignVCenter)
 
     def pct(self, it):
-        p = it.parent
-        if p is None or it is self.root:
-            return 1.0
-        return it.size / p.size if p.size else 0.0
+        """Share of the whole drive's capacity."""
+        return it.size / self.drive_total if self.drive_total else 0.0
 
     def data(self, idx, role=Qt.DisplayRole):
         if not idx.isValid():
@@ -340,6 +339,10 @@ class TreeModel(QAbstractItemModel):
 
 
 class BarDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None, color=ACCENT):
+        super().__init__(parent)
+        self.color = QColor(color)
+
     def paint(self, qp, opt, idx):
         v = idx.data(Qt.UserRole) or 0
         r = opt.rect.adjusted(3, 4, -3, -4)
@@ -351,7 +354,7 @@ class BarDelegate(QStyledItemDelegate):
         qp.drawRoundedRect(r, 2, 2)
         if v > 0:
             w = max(2.0, r.width() * min(v, 1.0))
-            qp.setBrush(QColor(ACCENT))
+            qp.setBrush(self.color)
             qp.drawRoundedRect(QRectF(r.x(), r.y(), w, r.height()), 2, 2)
         qp.setPen(QColor("#e6e8ec"))
         qp.drawText(r.adjusted(0, 0, -4, 0), Qt.AlignRight | Qt.AlignVCenter, idx.data(Qt.DisplayRole) or "")
@@ -368,7 +371,7 @@ def squarify(areas, x, y, w, h):
     """areas sorted descending, sum(areas) == w*h. Returns rects in the same order."""
     out, i, n = [], 0, len(areas)
     while i < n:
-        if w <= 0 or h <= 0:
+        if w < 0.5 or h < 0.5:
             out.extend([(x, y, 0, 0)] * (n - i))
             break
         side = min(w, h)
@@ -461,7 +464,7 @@ class TreeMap(QWidget):
         qp.end()
 
     def _draw(self, qp, it, r, depth):
-        if r.width() < 1 or r.height() < 1:
+        if not (1 <= r.width() <= 20000 and 1 <= r.height() <= 20000):
             return
         if it.is_dir and depth < self.MAXD and r.width() >= 30 and r.height() >= 30 and it.size > 0:
             shade = QColor(30 + depth * 6, 38 + depth * 6, 50 + depth * 7)
@@ -476,8 +479,8 @@ class TreeMap(QWidget):
                 qp.drawText(QRectF(r.x() + 4, r.y() + 1, r.width() - 8, self.HEAD),
                             Qt.AlignLeft | Qt.AlignVCenter, self.fm.elidedText(label, Qt.ElideRight, int(r.width() - 8)))
                 inner = r.adjusted(2, self.HEAD + 1, -2, -2)
-            kids = sorted((k for k in (*it.dirs, *it.files) if k.size > 0), key=lambda k: k.size, reverse=True)
-            total = it.size
+            kids = sorted((k for k in (*list(it.dirs), *list(it.files)) if k.size > 0), key=lambda k: k.size, reverse=True)
+            total = max(it.size, sum(k.size for k in kids))
             area = inner.width() * inner.height()
             if area <= 0 or not kids or total <= 0:
                 return
@@ -612,7 +615,7 @@ class Window(QMainWindow):
         self.tree.header().setSectionsMovable(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(C_NAME, QHeaderView.Stretch)
-        for c, w in ((C_SIZE, 90), (C_PCT, 130), (C_FILES, 80), (C_DIRS, 70), (C_MOD, 125)):
+        for c, w in ((C_SIZE, 85), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
             self.tree.setColumnWidth(c, w)
         self.tree.setItemDelegateForColumn(C_PCT, BarDelegate(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -652,7 +655,7 @@ class Window(QMainWindow):
         self.tabs.addTab(mapw, "Map")
 
         self.types = QTableWidget(0, 5)
-        self.types.setHorizontalHeaderLabels(["Type", "Extension", "Size", "% of folder", "Files"])
+        self.types.setHorizontalHeaderLabels(["Type", "Extension", "Size", "% of drive", "Files"])
         self.setup_table(self.types)
         self.types.setItemDelegateForColumn(3, BarDelegate(self.types))
         self.tabs.addTab(self.types, "Types")
@@ -706,8 +709,8 @@ class Window(QMainWindow):
         if s:
             self.split.restoreState(s)
         else:
-            self.split.setSizes([int(self.width() * 0.52), int(self.width() * 0.48)])
-        h = self.settings.value("header")
+            self.split.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
+        h = self.settings.value("header2")
         if h:
             self.tree.header().restoreState(h)
 
@@ -783,6 +786,7 @@ class Window(QMainWindow):
         self.settings.setValue("last_path", p)
         self.scanner = Scanner(p)
         self.scanner.finished.connect(self.scan_done, Qt.QueuedConnection)
+        self.model.drive_total = QStorageInfo(p).bytesTotal()
         self.model.set_root(self.scanner.root)
         self.set_focus(self.scanner.root)
         self.btn_scan.setText("Stop")
@@ -856,6 +860,7 @@ class Window(QMainWindow):
     def scan_done(self):
         self.tick.stop()
         self.live.stop()
+        gc.collect()
         s = self.scanner
         self.rebuild()
         if self.model.root and not self.tree.isExpanded(self.model.index_for(self.model.root)):
@@ -965,7 +970,7 @@ class Window(QMainWindow):
                 cname, col = EXT_CAT.get(e, OTHER)
                 it0 = QTableWidgetItem(f"■ {cname}")
                 it0.setForeground(QColor(col))
-                pct = sz / d.size if d.size else 0
+                pct = sz / self.model.drive_total if self.model.drive_total else 0
                 vals = [it0, QTableWidgetItem(f".{e}" if e else "(no extension)"), SortItem(human(sz), sz),
                         SortItem(f"{pct * 100:.1f} %", pct), SortItem(f"{n:,}", n)]
                 vals[3].setData(Qt.UserRole, pct)
@@ -1074,7 +1079,7 @@ class Window(QMainWindow):
             self.scanner.stop()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("split", self.split.saveState())
-        self.settings.setValue("header", self.tree.header().saveState())
+        self.settings.setValue("header2", self.tree.header().saveState())
         super().closeEvent(e)
 
 
@@ -1172,7 +1177,12 @@ def install_error_log():
 
 def main():
     install_error_log()
+    # Python's cycle collector can run on any thread; if it fires on a scanner thread while Qt objects are in
+    # the garbage it frees them off the GUI thread and crashes. Collect only on the GUI thread, on a timer.
+    gc.disable()
     app = QApplication(sys.argv)
+    gc_timer = QTimer(interval=30000, timeout=gc.collect)
+    gc_timer.start()
     app.setApplicationName(APP)
     apply_theme(app)
     app.setWindowIcon(foot_icon()[0])
