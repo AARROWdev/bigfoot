@@ -1034,7 +1034,10 @@ class Window(QMainWindow):
 
     def open_item(self, it):
         if self.usable(it):
-            os.startfile(it.path)
+            try:
+                os.startfile(it.path)
+            except OSError as e:  # deleted or moved since the scan, no app for this type, ...
+                self.status.setText(f"Can't open {it.name!r}: {e.strerror or e}")
 
     def usable(self, it):
         if self._safe_path(it.path):
