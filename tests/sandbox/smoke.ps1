@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Continue'
 $out = 'C:\out'; $log = "$out\results.txt"
 function Check($name, $ok) { "$(if ($ok) {'PASS'} else {'FAIL'})  $name" | Add-Content $log }
 if ($env:USERNAME -ne 'WDAGUtilityAccount') { 'Not in Windows Sandbox, refusing.' | Set-Content $log; exit 1 }
-$setup = Get-ChildItem C:\dist\BigfootSetup-*.exe | Select-Object -First 1
+$setup = Get-ChildItem C:\dist\BigfootSetup-*.exe | Sort-Object LastWriteTime | Select-Object -Last 1
 $app = "$env:ProgramFiles\Bigfoot"
 $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{3484C9CA-B551-4A47-A264-7723F3745472}_is1'
 $lnk = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Bigfoot.lnk"
@@ -22,6 +22,12 @@ $p = Start-Process $setup.FullName ($args_ + "/LOG=$out\upgrade.log") -Wait -Pas
 Check "upgrade while running exit 0 (got $($p.ExitCode))" ($p.ExitCode -eq 0)
 Check 'running Bigfoot was closed' ($run.HasExited)
 Check 'Bigfoot.exe present after upgrade' (Test-Path "$app\Bigfoot.exe")
+
+$run = Start-Process "$app\Bigfoot.exe" -PassThru; Start-Sleep 8
+$p = Start-Process "$app\unins000.exe" $args_ -Wait -PassThru; Start-Sleep 5
+Check "uninstall refused while running (exit $($p.ExitCode))" ($p.ExitCode -ne 0)
+Check 'install intact after refused uninstall' ((Test-Path "$app\Bigfoot.exe") -and (Test-Path $key))
+Stop-Process -Id $run.Id -Force -ErrorAction SilentlyContinue; Start-Sleep 2
 
 $p = Start-Process "$app\unins000.exe" $args_ -Wait -PassThru
 $t = 0; while ((Test-Path $app) -and $t -lt 60) { Start-Sleep 1; $t++ }

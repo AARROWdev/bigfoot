@@ -42,3 +42,15 @@ Name: "{autodesktop}\Bigfoot"; Filename: "{app}\Bigfoot.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Bigfoot.exe"; Description: "{cm:LaunchProgram,Bigfoot}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// Bigfoot holds the mutex "BigfootAppMutex" while it runs. Setup closes it (CloseApplications), but the
+// uninstaller doesn't, so it refuses to start until Bigfoot is closed instead of leaving a half-removed folder.
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+  while Result and CheckForMutexes('BigfootAppMutex') do
+    if UninstallSilent or (MsgBox('Bigfoot is running. Close it, then click OK to uninstall.',
+                                  mbError, MB_OKCANCEL) <> IDOK) then
+      Result := False;
+end;

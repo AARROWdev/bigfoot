@@ -5,6 +5,7 @@
 # Needs: .venv with requirements + pyinstaller, and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue  # only this build's downloads end up in dist
 
 $m = Select-String -Path bigfoot.py -Pattern '^VERSION = "([^"]+)"'
 if (-not $m) { throw 'VERSION not found in bigfoot.py' }

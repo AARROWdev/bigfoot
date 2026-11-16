@@ -1,5 +1,7 @@
 """Bigfoot - find what's eating your disk. Fast scan, biggest-first tree, treemap, type breakdown, top files."""
+import ctypes
 import gc
+import html
 import heapq
 import os
 import queue
@@ -9,18 +11,18 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import (QAbstractItemModel, QModelIndex, QObject, QPointF, QRectF, QSettings, QSize,
-                            QStorageInfo, Qt, QTimer, Signal)
+from PySide6.QtCore import (QAbstractItemModel, QEvent, QItemSelectionModel, QModelIndex, QObject, QPointF,
+                            QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
 from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QKeySequence,
                            QLinearGradient, QPainter, QPalette, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFileIconProvider,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-                               QProgressBar, QPushButton, QSplitter, QStyle, QStyledItemDelegate, QTableWidget,
+                               QProgressBar, QPushButton, QSizePolicy, QSplitter, QStyle, QStyledItemDelegate, QTableWidget,
                                QTableWidgetItem, QTabWidget, QToolButton, QTreeView, QVBoxLayout, QWidget)
 from PySide6.QtCore import QFile
 
 APP = "Bigfoot"
-VERSION = "1.1"
+VERSION = "1.2"
 ACCENT = "#2f9bff"
 
 # ---------------------------------------------------------------- file types
@@ -32,7 +34,7 @@ CATS = [
     ("Disk images", "#ff7a2f", "iso img vhd vhdx vmdk vdi dmg wim esd"),
     ("Programs", "#a46bff", "exe msi dll sys msix appx appxbundle msixbundle jar apk aab"),
     ("Documents", "#e8e26a", "pdf doc docx xls xlsx ppt pptx txt rtf odt ods csv md epub"),
-    ("Code + data", "#4fd6e8", "py js ts html css json xml c cpp h cs java go rs php sql db sqlite log"),
+    ("Code + data", "#4fd6e8", "py js html css json xml c cpp h cs java go rs php sql db sqlite log"),
 ]
 EXT_CAT = {e: (name, col) for name, col, exts in CATS for e in exts.split()}
 OTHER = ("Other", "#7d8794")
@@ -49,13 +51,25 @@ def cat_of(name):
 
 def human(n):
     for u in ("B", "KB", "MB", "GB", "TB"):
-        if n < 1024 or u == "TB":
+        if u == "TB" or round(n, 0 if u == "B" else 1) < 1024:  # unit picked after rounding: no "1024.0 KB"
             return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
         n /= 1024
 
 
 def fdate(t):
-    return time.strftime("%Y-%m-%d %H:%M", time.localtime(t)) if t else ""
+    if not t:
+        return ""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+    except (OSError, OverflowError, ValueError):  # NTFS allows dates localtime can't convert
+        return "?"
+
+
+def long_path(p):
+    """Extended-length form: folders deeper than MAX_PATH, and names ending in '.' or ' ', scan as themselves."""
+    if p.startswith("\\\\?\\"):
+        return p
+    return "\\\\?\\UNC\\" + p[2:] if p.startswith("\\\\") else "\\\\?\\" + p
 
 
 # ---------------------------------------------------------------- tree
@@ -74,7 +88,7 @@ class File:
 
 class Dir:
     __slots__ = ("name", "path", "parent", "dirs", "files", "own", "own_mt", "size", "nfiles", "ndirs",
-                 "mtime", "denied", "_row", "_kids")
+                 "mtime", "denied", "skipped", "_row", "_kids")
     is_dir = True
 
     def __init__(self, name, path, parent, mtime=0):
@@ -82,7 +96,7 @@ class Dir:
         self.dirs, self.files = [], []
         self.own = self.size = self.nfiles = self.ndirs = 0
         self.own_mt = self.mtime = mtime
-        self.denied = False
+        self.denied = self.skipped = False
         self._row, self._kids = 0, None
 
 
@@ -115,7 +129,7 @@ def walk_files(d):
 
 # ---------------------------------------------------------------- scanner
 class Scanner(QObject):
-    finished = Signal()
+    finished = Signal(object)  # carries the scanner, so a stale finish can be told apart
 
     def __init__(self, path, threads=16):
         super().__init__()
@@ -144,7 +158,7 @@ class Scanner(QObject):
         for _ in self.workers:
             self.q.put(None)
         self.t1 = time.time()
-        self.finished.emit()
+        self.finished.emit(self)
 
     def _work(self):
         while True:
@@ -152,7 +166,9 @@ class Scanner(QObject):
             if d is None:
                 return
             try:
-                if not self.stopped:
+                if self.stopped:
+                    d.skipped = True  # never listed: its size is unknown, not zero
+                else:
                     self._scan(d)
             except Exception:
                 d.denied = True
@@ -161,14 +177,14 @@ class Scanner(QObject):
 
     def _scan(self, d):
         self.current = d.path
-        own, mt, nf = 0, d.own_mt, 0
+        own, nf = 0, 0
         try:
-            with os.scandir(d.path) as it:
+            with os.scandir(long_path(d.path)) as it:
                 for e in it:
                     try:
+                        if e.is_symlink() or e.is_junction():
+                            continue
                         if e.is_dir(follow_symlinks=False):
-                            if e.is_junction() or e.is_symlink():
-                                continue
                             st = e.stat(follow_symlinks=False)
                             sub = Dir(e.name, os.path.join(d.path, e.name), d, st.st_mtime)
                             d.dirs.append(sub)
@@ -177,16 +193,16 @@ class Scanner(QObject):
                         else:
                             st = e.stat(follow_symlinks=False)
                             d.files.append(File(e.name, d, st.st_size, st.st_mtime))
+                            d.own += st.st_size  # kept current so a live refresh shows the size so far
                             own += st.st_size
                             nf += 1
-                            if st.st_mtime > mt:
-                                mt = st.st_mtime
+                            if st.st_mtime > d.own_mt:
+                                d.own_mt = st.st_mtime
                     except OSError:
                         pass
         except OSError:
             d.denied = True
             self.denied += 1
-        d.own, d.own_mt = own, mt
         self.files += nf
         self.bytes += own
 
@@ -243,8 +259,21 @@ class TreeModel(QAbstractItemModel):
             return QModelIndex()
         if it is self.root:
             return self.createIndex(0, col, it)
-        self.kids(it.parent)
+        if not self.listed(it):
+            return QModelIndex()
         return self.createIndex(it._row, col, it)
+
+    def listed(self, it):
+        """True if it is shown under the current root (not hidden, recycled, added mid-scan or from an old scan)."""
+        while it is not self.root:
+            p = it.parent
+            if p is None:
+                return False
+            k = self.kids(p)
+            if not (0 <= it._row < len(k) and k[it._row] is it):
+                return False
+            it = p
+        return True
 
     def index(self, row, col, parent=QModelIndex()):
         if self.root is None:
@@ -317,7 +346,7 @@ class TreeModel(QAbstractItemModel):
         elif role == Qt.TextAlignmentRole and c != C_NAME:
             return int(Qt.AlignRight | Qt.AlignVCenter)
         elif role == Qt.ForegroundRole:
-            if it.is_dir and it.denied:
+            if it.is_dir and (it.denied or it.skipped):
                 return QColor("#ff8a8a")
             if c in (C_FILES, C_DIRS, C_MOD):
                 return QColor("#9aa0aa")
@@ -325,6 +354,8 @@ class TreeModel(QAbstractItemModel):
             tip = it.path
             if it.is_dir and it.denied:
                 tip += "\n(access denied: some contents not counted)"
+            if it.is_dir and it.skipped:
+                tip += "\n(not scanned: the scan was stopped)"
             return tip
         return None
 
@@ -412,6 +443,7 @@ class TreeMap(QWidget):
         self.hits = []
         self.pix = None
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.ClickFocus)
         self.setMinimumSize(200, 150)
         self.font_ = QFont(self.font())
         self.font_.setPointSizeF(8)
@@ -549,6 +581,8 @@ class TreeMap(QWidget):
             self.zoom.emit(self.focus.parent)
 
     def mouseDoubleClickEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return self.mousePressEvent(e)
         it = self.hit(e.position())
         if it is None:
             return
@@ -578,6 +612,7 @@ class Window(QMainWindow):
         self.drives.setMinimumWidth(240)
         self.fill_drives()
         self.drives.activated.connect(self.drive_picked)
+        self.drives.installEventFilter(self)  # no scan from a stray wheel notch or arrow key
         self.path = QLineEdit()
         self.path.setPlaceholderText("Folder or drive to scan")
         self.path.returnPressed.connect(self.scan)
@@ -638,6 +673,7 @@ class Window(QMainWindow):
         self.btn_up.clicked.connect(self.map_up)
         self.crumb = QLabel("")
         self.crumb.setObjectName("crumb")
+        self.crumb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         crumb.addWidget(self.btn_up)
         crumb.addWidget(self.crumb, 1)
         ml.addLayout(crumb)
@@ -694,17 +730,18 @@ class Window(QMainWindow):
         self.live = QTimer(self, interval=2000, timeout=self.live_refresh)
         self.sel_timer = QTimer(self, singleShot=True, interval=120, timeout=self.apply_selection)
 
-        QShortcut(QKeySequence.Delete, self.tree, lambda: self.trash(self.selected_items()))
-        QShortcut(QKeySequence.Copy, self.tree, lambda: self.copy_paths(self.selected_items()))
+        for key, fn in ((QKeySequence.Delete, self.trash), (QKeySequence.Copy, self.copy_paths)):
+            QShortcut(key, self.tree, lambda fn=fn: fn(self.selected_items())).setContext(Qt.WidgetWithChildrenShortcut)
         QShortcut(QKeySequence("F5"), self, self.scan)
         QShortcut(QKeySequence("Ctrl+L"), self, lambda: (self.path.setFocus(), self.path.selectAll()))
-        QShortcut(QKeySequence("Backspace"), self.map, self.map_up)
+        QShortcut(QKeySequence("Backspace"), self.map, self.map_up).setContext(Qt.WidgetShortcut)
 
         g = self.settings.value("geometry")
         if g:
             self.restoreGeometry(g)
         else:
-            self.resize(1500, 900)
+            ag = self.screen().availableGeometry()
+            self.resize(min(1500, ag.width() - 40), min(900, ag.height() - 60))
         s = self.settings.value("split")
         if s:
             self.split.restoreState(s)
@@ -730,23 +767,48 @@ class Window(QMainWindow):
         t.horizontalHeader().setStretchLastSection(True)
         t.verticalHeader().setDefaultSectionSize(22)
 
+    def eventFilter(self, obj, e):
+        if obj is self.drives and (e.type() == QEvent.Wheel or (e.type() == QEvent.KeyPress and e.key() in (
+                Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End))):
+            return True
+        return super().eventFilter(obj, e)
+
     def fill_drives(self):
         self.drives.clear()
-        for v in QStorageInfo.mountedVolumes():
+        k32 = ctypes.windll.kernel32
+        mask = k32.GetLogicalDrives()
+        for i in range(26):
+            if not mask >> i & 1:
+                continue
+            root = f"{chr(65 + i)}:\\"
+            kind = k32.GetDriveTypeW(root)
+            if kind < 2:
+                continue
+            if kind == 4:  # DRIVE_REMOTE: don't ask for sizes on the GUI thread, an offline share hangs it
+                self.drives.addItem(f"{root}  network drive", root)
+                continue
+            v = QStorageInfo(root)
             if not v.isValid() or not v.isReady():
                 continue
-            root = v.rootPath().replace("/", "\\")
             used = v.bytesTotal() - v.bytesAvailable()
             name = v.displayName() if v.displayName() != v.rootPath() else ""
             self.drives.addItem(f"{root}  {name}  {human(used)} / {human(v.bytesTotal())}".replace("    ", "  "), root)
 
+    def busy(self):
+        if self.scanner and not self.scanner.t1:
+            self.status.setText("Stop the current scan first.")
+            return True
+        return False
+
     def drive_picked(self, i):
+        if self.busy():
+            return
         self.path.setText(self.drives.itemData(i))
         self.scan()
 
     def browse(self):
         d = QFileDialog.getExistingDirectory(self, "Folder to scan", self.path.text() or "C:\\")
-        if d:
+        if d and not self.busy():
             self.path.setText(os.path.normpath(d))
             self.scan()
 
@@ -757,10 +819,6 @@ class Window(QMainWindow):
             if id(it) not in seen:
                 seen.add(id(it))
                 out.append(it)
-        if not out:
-            cur = self.tree.currentIndex()
-            if cur.isValid():
-                out.append(cur.internalPointer())
         return out
 
     # ---------- scanning
@@ -786,8 +844,14 @@ class Window(QMainWindow):
         self.settings.setValue("last_path", p)
         self.scanner = Scanner(p)
         self.scanner.finished.connect(self.scan_done, Qt.QueuedConnection)
-        self.model.drive_total = QStorageInfo(p).bytesTotal()
+        t = QStorageInfo(p).bytesTotal()
+        self.model.drive_total = t if t > 0 else 0  # -1 on UNC paths
+        for tbl in (self.types, self.top):
+            tbl.clearSelection()
+            tbl.setRowCount(0)
+        self.map.sel, self.map.hits = None, []
         self.model.set_root(self.scanner.root)
+        self.tree.expand(self.model.index_for(self.scanner.root))
         self.set_focus(self.scanner.root)
         self.btn_scan.setText("Stop")
         self.btn_scan.setEnabled(True)
@@ -813,7 +877,7 @@ class Window(QMainWindow):
 
     def progress(self):
         s = self.scanner
-        if not s or s.t1:
+        if not s or s.t1 or s.stopped:
             return
         el = time.time() - s.t0
         cur = s.current
@@ -831,15 +895,21 @@ class Window(QMainWindow):
                 exp.append(d)
                 stack.extend(d.dirs)
         cur = self.tree.currentIndex()
-        return exp, (cur.internalPointer() if cur.isValid() else None), self.tree.verticalScrollBar().value()
+        sel = [i.internalPointer() for i in self.tree.selectionModel().selectedRows(0)]
+        return exp, (cur.internalPointer() if cur.isValid() else None), self.tree.verticalScrollBar().value(), sel
 
     def restore_view(self, snap):
-        exp, cur, scroll = snap
+        exp, cur, scroll, sel = snap
         for d in exp:
             self.tree.setExpanded(self.model.index_for(d), True)
         if cur is not None:
             self.tree.selectionModel().setCurrentIndex(self.model.index_for(cur),
                                                        QItemSelectionModelFlags())
+        sm = self.tree.selectionModel()
+        for it in sel:
+            idx = self.model.index_for(it)
+            if idx.isValid():
+                sm.select(idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
         self.tree.verticalScrollBar().setValue(scroll)
 
     def rebuild(self):
@@ -857,11 +927,12 @@ class Window(QMainWindow):
         if self.scanner and not self.scanner.t1:
             self.rebuild()
 
-    def scan_done(self):
+    def scan_done(self, s):
+        if s is not self.scanner:
+            return  # a newer scan already started
         self.tick.stop()
         self.live.stop()
         gc.collect()
-        s = self.scanner
         self.rebuild()
         if self.model.root and not self.tree.isExpanded(self.model.index_for(self.model.root)):
             self.tree.expand(self.model.index_for(self.model.root))
@@ -874,9 +945,11 @@ class Window(QMainWindow):
             msg += f"  ·  {s.denied:,} folders access denied (run as admin to count them)"
         self.status.setText(msg)
         self.refresh_tables()
-        cur = self.drives.currentIndex()
+        cur = self.drives.currentData()
         self.fill_drives()
-        self.drives.setCurrentIndex(cur)
+        i = self.drives.findData(cur)
+        if i >= 0:
+            self.drives.setCurrentIndex(i)
 
     # ---------- focus / selection
     def current_changed(self, cur, prev):
@@ -905,7 +978,9 @@ class Window(QMainWindow):
         if d is None:
             self.crumb.setText("")
             return
-        self.crumb.setText(f"<b>{d.path}</b>  ·  {human(d.size)}  ·  {d.nfiles:,} files")
+        path = self.crumb.fontMetrics().elidedText(d.path, Qt.ElideMiddle, max(120, self.crumb.width() - 220))
+        self.crumb.setText(f"<b>{html.escape(path)}</b>  ·  {human(d.size)}  ·  {d.nfiles:,} files")
+        self.crumb.setToolTip(d.path)
         self.btn_up.setEnabled(d.parent is not None)
 
     def map_up(self):
@@ -923,6 +998,8 @@ class Window(QMainWindow):
             self.tree.setExpanded(self.model.index_for(d), True)
         idx = self.model.index_for(it)
         self.map_pick = True
+        if not idx.isValid():
+            self.tree.clearSelection()  # not shown in the tree (Files off): don't leave an old row selected
         self.tree.setCurrentIndex(idx)
         self.map_pick = False
         self.tree.scrollTo(idx)
@@ -941,7 +1018,7 @@ class Window(QMainWindow):
         self.model.show_files = on
         self.model.set_root(self.model.root)
         if snap[1] is not None and not snap[1].is_dir and not on:
-            snap = (snap[0], snap[1].parent, snap[2])
+            snap = (snap[0], snap[1].parent, snap[2], snap[3])
         self.restore_view(snap)
 
     # ---------- tables
@@ -964,6 +1041,7 @@ class Window(QMainWindow):
                     a[1] += 1
             rows = sorted(agg.items(), key=lambda kv: kv[1][0], reverse=True)[:500]
             t = self.types
+            t.clearSelection()
             t.setSortingEnabled(False)
             t.setRowCount(len(rows))
             for r, (e, (sz, n)) in enumerate(rows):
@@ -984,6 +1062,7 @@ class Window(QMainWindow):
         elif tab == 2:
             big = heapq.nlargest(100, walk_files(d), key=lambda f: f.size)
             t = self.top
+            t.clearSelection()
             t.setSortingEnabled(False)
             t.setRowCount(len(big))
             for r, f in enumerate(big):
@@ -1015,32 +1094,47 @@ class Window(QMainWindow):
             m.addAction("Open", lambda: os.startfile(one.path))
             m.addAction("Show in Explorer", lambda: self.reveal(one))
             if one.is_dir:
-                m.addAction("Show in map", lambda: (self.select_in_tree(one), self.set_focus(one)))
-                m.addAction("Scan only this folder", lambda: (self.path.setText(one.path), self.scan()))
+                m.addAction("Show in map", lambda: (self.select_in_tree(one), self.set_focus(one),
+                                                       self.tabs.setCurrentIndex(0)))
+                m.addAction("Scan only this folder", lambda: self.busy() or (self.path.setText(one.path), self.scan()))
         m.addAction("Copy path" + ("s" if len(items) > 1 else ""), lambda: self.copy_paths(items))
         m.addSeparator()
         total = sum(i.size for i in items)
         m.addAction(f"Send to Recycle Bin ({human(total)})", lambda: self.trash(items))
         m.exec(gpos)
+        m.deleteLater()
 
     def reveal(self, it):
         subprocess.Popen(f'explorer /select,"{it.path}"')
 
     def copy_paths(self, items):
+        if not items:
+            return
         QGuiApplication.clipboard().setText("\n".join(i.path for i in items))
         self.status.setText(f"Copied {len(items)} path{'s' if len(items) > 1 else ''}")
 
     def trash(self, items):
         items = [i for i in items if i.parent is not None]
+        # a folder and something inside it: recycle only the folder (no double count, no stale child)
+        items = [i for i in items if not any(j is not i and self._inside(i, j) for j in items)]
         if not items:
             return
         if self.scanner and not self.scanner.t1:
             self.status.setText("Wait for the scan to finish before deleting.")
             return
+        bad = [i for i in items if not self._trashable(i.name)]
+        if bad:
+            items = [i for i in items if i not in bad]
+            self.status.setText(f"Can't recycle {bad[0].name!r}: Windows would act on a different file. "
+                                "Use Explorer for this one.")
+            if not items:
+                return
         total = sum(i.size for i in items)
         names = "\n".join(i.path for i in items[:8]) + ("\n…" if len(items) > 8 else "")
+        unknown = any(self._has_skipped(i) for i in items)
         if QMessageBox.question(self, "Send to Recycle Bin",
-                                f"Send {len(items)} item{'s' if len(items) > 1 else ''} ({human(total)}) "
+                                f"Send {len(items)} item{'s' if len(items) > 1 else ''} ({human(total)}"
+                                f"{' or more: part of it was not scanned' if unknown else ''}) "
                                 f"to the Recycle Bin?\n\n{names}") != QMessageBox.Yes:
             return
         failed = []
@@ -1059,12 +1153,35 @@ class Window(QMainWindow):
             if self.focus is it or self._inside(self.focus, it):
                 self.focus = p
         cur = self.tree.currentIndex()
-        if cur.isValid() and any(cur.internalPointer() is i or self._inside(cur.internalPointer(), i) for i in items):
+        if cur.isValid() and any(self._inside(cur.internalPointer(), i) for i in items):
             self.tree.setCurrentIndex(self.model.index_for(items[0].parent))
+        if self.map.sel is not None and any(self._inside(self.map.sel, i) for i in items):
+            self.map.sel = None
         self.rebuild()
         self.set_focus(self.focus)
         self.status.setText(f"Sent {len(items) - len(failed)} to the Recycle Bin" +
                             (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else ""))
+
+    @staticmethod
+    def _trashable(name):
+        """Names Windows paths silently rewrite (trailing '.' or ' ', unpaired surrogates) would hit a sibling."""
+        if name.endswith((".", " ")):
+            return False
+        try:
+            name.encode("utf-16-le")
+        except UnicodeEncodeError:
+            return False
+        return True
+
+    @staticmethod
+    def _has_skipped(it):
+        stack = [it] if it.is_dir else []
+        while stack:
+            d = stack.pop()
+            if d.skipped:
+                return True
+            stack.extend(d.dirs)
+        return False
 
     @staticmethod
     def _inside(it, anc):
@@ -1177,6 +1294,8 @@ def install_error_log():
 
 def main():
     install_error_log()
+    # the uninstaller checks this mutex and refuses to remove files while Bigfoot is running
+    main.mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "BigfootAppMutex")
     # Python's cycle collector can run on any thread; if it fires on a scanner thread while Qt objects are in
     # the garbage it frees them off the GUI thread and crashes. Collect only on the GUI thread, on a timer.
     gc.disable()
