@@ -374,6 +374,7 @@ def test_clipboard_1000_paths_and_unicode(window, work):
     window.activateWindow()  # shortcuts only fire in the active window (Notepad took it)
     h.wait_until(window.isActiveWindow, 10, "Bigfoot active again")
     window.tree.setFocus()  # (keys reach the shortcut only through the focused widget)
+    h.wait_until(lambda: QApplication.focusWidget() is window.tree, 10, "tree focused")
     # nothing selected: clipboard untouched
     QGuiApplication.clipboard().setText("keep me")
     window.tree.clearSelection()
