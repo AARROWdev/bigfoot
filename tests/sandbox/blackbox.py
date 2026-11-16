@@ -141,22 +141,38 @@ def run_check(name, fn):
 
 
 # ------------------------------------------------------------------ modes
+def msaa_checked(it):
+    """The MSAA "checked" state of a UIA element, or None if it can't be read."""
+    try:
+        from pywinauto.uia_defines import get_elem_interface
+        return bool(get_elem_interface(it.element_info.element, "LegacyIAccessible").CurrentState & 0x10)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def tick_desktop_task():
     """Ticks "Create a desktop shortcut" through UI Automation (no mouse or keyboard needed). True if done."""
     try:
         w = Desktop(backend="uia").window(title_re="Setup - Bigfoot.*")
         for it in w.descendants():
             if "desktop" in it.window_text().lower():
-                for how in ("toggle", "legacy"):  # Toggle pattern, else the MSAA default action ("Check")
+                for how in ("toggle", "legacy", "click"):  # Toggle pattern, MSAA default action, or a click
                     try:
                         if how == "toggle":
                             it.toggle()
-                        else:
-                            it.iface_legacy_iaccessible.DoDefaultAction()
+                        elif how == "legacy":
+                            from pywinauto.uia_defines import get_elem_interface
+                            get_elem_interface(it.element_info.element, "LegacyIAccessible").DoDefaultAction()
+                        else:  # a posted mouse click on the item itself (no SendInput)
+                            wiz = Desktop(backend="win32").window(title_re="Setup - Bigfoot.*")
+                            lb = wiz.child_window(class_name="TNewCheckListBox").wrapper_object()
+                            r, lr = it.rectangle(), lb.rectangle()
+                            lb.click(coords=(r.left - lr.left + 8, (r.top + r.bottom) // 2 - lr.top))
                         time.sleep(0.5)
-                        state = it.legacy_properties().get("State", 0)
-                        log("ticked via", how, "MSAA state", hex(state))
-                        return True  # (the desktop shortcut check after install is the real proof)
+                        checked = msaa_checked(it)
+                        log("tried", how, "-> checked:", checked)
+                        if checked is not False:  # True, or unknown (the shortcut check decides)
+                            return True
                     except Exception as e:  # noqa: BLE001
                         log("no", how, "on", it.element_info.control_type, e)
     except Exception as e:  # noqa: BLE001
