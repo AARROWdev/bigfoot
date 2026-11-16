@@ -12,8 +12,8 @@ import time
 import traceback
 import winreg
 
-from PySide6.QtCore import (QAbstractItemModel, QByteArray, QEvent, QItemSelectionModel, QModelIndex, QObject,
-                            QPointF, QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
+from PySide6.QtCore import (QAbstractEventDispatcher, QAbstractItemModel, QByteArray, QEvent, QItemSelectionModel,
+                            QModelIndex, QObject, QPointF, QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
 from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QKeySequence,
                            QLinearGradient, QPainter, QPalette, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFileIconProvider,
@@ -174,7 +174,7 @@ class Scanner(QObject):
         self.current = path
         self.t0 = self.t1 = 0
         self.n = threads
-        self.go = threading.Event()  # cleared while the window redraws: see Window.live_refresh
+        self.go = threading.Event()  # cleared while the window has work to do: see Window.gui_busy
         self.go.set()
 
     def start(self):
@@ -217,7 +217,7 @@ class Scanner(QObject):
             with os.scandir(long_path(d.path)) as it:
                 for n, e in enumerate(it):
                     if not n & 255:
-                        self.go.wait()
+                        self.go.wait(0.2)  # (never more than 0.2 s: the window may stay busy)
                     try:
                         if e.is_symlink() or e.is_junction():
                             continue
@@ -764,6 +764,9 @@ class Window(QMainWindow):
         self.status = QLabel("Pick a drive or folder and hit Scan.")
         self.statusBar().addWidget(self.status, 1)
 
+        disp = QAbstractEventDispatcher.instance()
+        disp.awake.connect(self.gui_busy)
+        disp.aboutToBlock.connect(self.gui_idle)
         self.tick = QTimer(self, interval=150, timeout=self.progress)
         self.live = QTimer(self, interval=2000, timeout=self.live_refresh)
         self.sel_timer = QTimer(self, singleShot=True, interval=120, timeout=self.apply_selection)
@@ -985,13 +988,19 @@ class Window(QMainWindow):
         self.update_crumb()
 
     def live_refresh(self):
-        s = self.scanner
-        if s and not s.t1:
-            # the scanner threads share Python's GIL with this one: hold them while the tree is rebuilt and
-            # redrawn, or the window stalls for seconds on a big drive
-            s.go.clear()
+        if self.scanner and not self.scanner.t1:
             self.rebuild()
-            QTimer.singleShot(60, s.go.set)
+
+    # The scanner threads share Python's GIL with the window: while it scans a big drive, every redraw, click
+    # or scroll had to fight 16 threads for it and the window froze for seconds. The window now has priority:
+    # the threads pause whenever its event loop wakes up with work, and carry on as soon as it goes idle.
+    def gui_busy(self):
+        if self.scanner:
+            self.scanner.go.clear()
+
+    def gui_idle(self):
+        if self.scanner:
+            self.scanner.go.set()
 
     def scan_done(self, s):
         if s is not self.scanner:
