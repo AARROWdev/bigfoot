@@ -710,6 +710,7 @@ class Window(QMainWindow):
         self.split.addWidget(self.tabs)
         self.split.setStretchFactor(0, 3)
         self.split.setStretchFactor(1, 2)
+        self.split.splitterMoved.connect(lambda *_: self.update_crumb())
 
         central = QWidget()
         cl = QVBoxLayout(central)
@@ -768,7 +769,8 @@ class Window(QMainWindow):
         t.verticalHeader().setDefaultSectionSize(22)
 
     def eventFilter(self, obj, e):
-        if obj is self.drives and (e.type() == QEvent.Wheel or (e.type() == QEvent.KeyPress and e.key() in (
+        if obj is self.drives and (e.type() == QEvent.Wheel or (
+                e.type() == QEvent.KeyPress and not e.modifiers() & Qt.AltModifier and e.key() in (
                 Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End))):
             return True
         return super().eventFilter(obj, e)
@@ -802,6 +804,7 @@ class Window(QMainWindow):
 
     def drive_picked(self, i):
         if self.busy():
+            self.sync_drive(self.scanner.root.path)  # keep showing the drive being scanned
             return
         self.path.setText(self.drives.itemData(i))
         self.scan()
@@ -836,7 +839,15 @@ class Window(QMainWindow):
         p = self.path.text().strip().strip('"')
         if len(p) == 2 and p[1] == ":":
             p += "\\"
-        if not os.path.isdir(p):
+        remote = p.startswith("\\\\") or (p[1:2] == ":" and ctypes.windll.kernel32.GetDriveTypeW(p[:2] + "\\") == 4)
+        found = []  # a network path is probed off the GUI thread: an offline share would freeze the window
+        probe = threading.Thread(target=lambda: found.append(os.path.isdir(p)), daemon=True)
+        probe.start()
+        probe.join(3 if remote else None)
+        if not found:
+            self.status.setText(f"Network drive not responding: {p}")
+            return
+        if not found[0]:
             self.status.setText(f"Not a folder: {p}")
             return
         p = os.path.abspath(p)
@@ -844,7 +855,7 @@ class Window(QMainWindow):
         self.settings.setValue("last_path", p)
         self.scanner = Scanner(p)
         self.scanner.finished.connect(self.scan_done, Qt.QueuedConnection)
-        t = QStorageInfo(p).bytesTotal()
+        t = 0 if remote else QStorageInfo(p).bytesTotal()
         self.model.drive_total = t if t > 0 else 0  # -1 on UNC paths
         for tbl in (self.types, self.top):
             tbl.clearSelection()
@@ -855,13 +866,19 @@ class Window(QMainWindow):
         self.set_focus(self.scanner.root)
         self.btn_scan.setText("Stop")
         self.btn_scan.setEnabled(True)
-        self.show_usage(p)
-        for i in range(self.drives.count()):
-            if p.upper().startswith(self.drives.itemData(i).upper()):
-                self.drives.setCurrentIndex(i)
+        if remote:
+            self.usage.hide()
+        else:
+            self.show_usage(p)
+        self.sync_drive(p)
         self.scanner.start()
         self.tick.start()
         self.live.start()
+
+    def sync_drive(self, p):
+        for i in range(self.drives.count()):
+            if p.upper().startswith(self.drives.itemData(i).upper()):
+                self.drives.setCurrentIndex(i)
 
     def show_usage(self, p):
         v = QStorageInfo(p)
@@ -903,8 +920,8 @@ class Window(QMainWindow):
         for d in exp:
             self.tree.setExpanded(self.model.index_for(d), True)
         if cur is not None:
-            self.tree.selectionModel().setCurrentIndex(self.model.index_for(cur),
-                                                       QItemSelectionModelFlags())
+            # current row only: selection comes back from sel, so a deselected row stays deselected
+            self.tree.selectionModel().setCurrentIndex(self.model.index_for(cur), QItemSelectionModel.NoUpdate)
         sm = self.tree.selectionModel()
         for it in sel:
             idx = self.model.index_for(it)
@@ -978,8 +995,12 @@ class Window(QMainWindow):
         if d is None:
             self.crumb.setText("")
             return
-        path = self.crumb.fontMetrics().elidedText(d.path, Qt.ElideMiddle, max(120, self.crumb.width() - 220))
-        self.crumb.setText(f"<b>{html.escape(path)}</b>  ·  {human(d.size)}  ·  {d.nfiles:,} files")
+        rest = f"  ·  {human(d.size)}  ·  {d.nfiles:,} files"
+        bold = QFont(self.crumb.font())
+        bold.setBold(True)
+        room = max(120, self.crumb.width() - self.crumb.fontMetrics().horizontalAdvance(rest) - 12)
+        path = QFontMetrics(bold).elidedText(d.path, Qt.ElideMiddle, room)
+        self.crumb.setText(f"<b>{html.escape(path)}</b>{rest}")
         self.crumb.setToolTip(d.path)
         self.btn_up.setEnabled(d.parent is not None)
 
@@ -1011,7 +1032,17 @@ class Window(QMainWindow):
     def tree_double(self, idx):
         it = idx.internalPointer()
         if not it.is_dir:
+            self.open_item(it)
+
+    def open_item(self, it):
+        if self.usable(it):
             os.startfile(it.path)
+
+    def usable(self, it):
+        if self._safe_path(it.path):
+            return True
+        self.status.setText(f"Can't open {it.name!r}: Windows would act on a different file. Use Explorer for this one.")
+        return False
 
     def toggle_files(self, on):
         snap = self.snapshot_view()
@@ -1091,7 +1122,7 @@ class Window(QMainWindow):
         m = QMenu(self)
         one = items[0]
         if len(items) == 1:
-            m.addAction("Open", lambda: os.startfile(one.path))
+            m.addAction("Open", lambda: self.open_item(one))
             m.addAction("Show in Explorer", lambda: self.reveal(one))
             if one.is_dir:
                 m.addAction("Show in map", lambda: (self.select_in_tree(one), self.set_focus(one),
@@ -1105,7 +1136,8 @@ class Window(QMainWindow):
         m.deleteLater()
 
     def reveal(self, it):
-        subprocess.Popen(f'explorer /select,"{it.path}"')
+        if self.usable(it):
+            subprocess.Popen(f'explorer /select,"{it.path}"')
 
     def copy_paths(self, items):
         if not items:
@@ -1116,13 +1148,14 @@ class Window(QMainWindow):
     def trash(self, items):
         items = [i for i in items if i.parent is not None]
         # a folder and something inside it: recycle only the folder (no double count, no stale child)
-        items = [i for i in items if not any(j is not i and self._inside(i, j) for j in items)]
+        ids = {id(i) for i in items}
+        items = [i for i in items if not self._under(i, ids)]
         if not items:
             return
         if self.scanner and not self.scanner.t1:
             self.status.setText("Wait for the scan to finish before deleting.")
             return
-        bad = [i for i in items if not self._trashable(i.name)]
+        bad = [i for i in items if not self._safe_path(i.path)]
         if bad:
             items = [i for i in items if i not in bad]
             self.status.setText(f"Can't recycle {bad[0].name!r}: Windows would act on a different file. "
@@ -1160,18 +1193,30 @@ class Window(QMainWindow):
         self.rebuild()
         self.set_focus(self.focus)
         self.status.setText(f"Sent {len(items) - len(failed)} to the Recycle Bin" +
-                            (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else ""))
+                            (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else "") +
+                            (f"  ·  skipped {bad[0].name!r} (use Explorer)" if bad else ""))
 
     @staticmethod
-    def _trashable(name):
-        """Names Windows paths silently rewrite (trailing '.' or ' ', unpaired surrogates) would hit a sibling."""
-        if name.endswith((".", " ")):
-            return False
-        try:
-            name.encode("utf-16-le")
-        except UnicodeEncodeError:
-            return False
+    def _safe_path(path):
+        """False if any folder or name in the path is one Windows silently rewrites (trailing '.' or ' ',
+        unpaired surrogates): open / recycle would act on a sibling."""
+        for name in path.split("\\")[1:]:
+            if name.endswith((".", " ")):
+                return False
+            try:
+                name.encode("utf-16-le")
+            except UnicodeEncodeError:
+                return False
         return True
+
+    @staticmethod
+    def _under(it, ids):
+        p = it.parent
+        while p is not None:
+            if id(p) in ids:
+                return True
+            p = p.parent
+        return False
 
     @staticmethod
     def _has_skipped(it):
@@ -1191,6 +1236,11 @@ class Window(QMainWindow):
             it = it.parent
         return False
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "crumb"):
+            self.update_crumb()
+
     def closeEvent(self, e):
         if self.scanner:
             self.scanner.stop()
@@ -1198,11 +1248,6 @@ class Window(QMainWindow):
         self.settings.setValue("split", self.split.saveState())
         self.settings.setValue("header2", self.tree.header().saveState())
         super().closeEvent(e)
-
-
-def QItemSelectionModelFlags():
-    from PySide6.QtCore import QItemSelectionModel
-    return QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows
 
 
 class SortItem(QTableWidgetItem):
@@ -1295,7 +1340,8 @@ def install_error_log():
 def main():
     install_error_log()
     # the uninstaller checks this mutex and refuses to remove files while Bigfoot is running
-    main.mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "BigfootAppMutex")
+    k32 = ctypes.windll.kernel32
+    main.mutex = [k32.CreateMutexW(None, False, n) for n in ("BigfootAppMutex", "Global\\BigfootAppMutex")]
     # Python's cycle collector can run on any thread; if it fires on a scanner thread while Qt objects are in
     # the garbage it frees them off the GUI thread and crashes. Collect only on the GUI thread, on a timer.
     gc.disable()
