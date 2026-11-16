@@ -73,9 +73,11 @@ def long_path(p):
     return "\\\\?\\UNC\\" + p[2:] if p.startswith("\\\\") else "\\\\?\\" + p
 
 
-def recycle_refusal(path, size):
+def recycle_refusal(path, size, batch=None):
     """Why Windows would delete this permanently instead of recycling it, or None. In those cases
-    QFile.moveToTrash deletes without a word and still reports success, so Bigfoot refuses up front."""
+    QFile.moveToTrash deletes without a word and still reports success, so Bigfoot refuses up front.
+    batch: {volume: bytes} of the items already accepted in this Delete: items that together don't fit make
+    Windows purge the ones recycled a moment earlier."""
     k32 = ctypes.windll.kernel32
     vol, guid = ctypes.create_unicode_buffer(1024), ctypes.create_unicode_buffer(64)
     if not (k32.GetVolumePathNameW(path, vol, 1024) and k32.GetVolumeNameForVolumeMountPointW(vol.value, guid, 64)):
@@ -94,8 +96,12 @@ def recycle_refusal(path, size):
         return "Windows is set to delete files on this drive instead of recycling them"
     cap = setting(bin_key, "MaxCapacity")  # MB; Windows' default when it was never changed is 5% of the drive
     cap = cap * 2**20 if cap else QStorageInfo(vol.value).bytesTotal() // 20
-    if size > cap:
-        return f"it's bigger than this drive's Recycle Bin ({human(cap)}), so Windows would delete it for good"
+    batch = {} if batch is None else batch
+    before = batch.get(guid.value, 0)
+    if before + size > cap:
+        why = "it's bigger than" if not before else "with the rest of the selection it won't fit in"
+        return f"{why} this drive's Recycle Bin ({human(cap)}), so Windows would delete it for good"
+    batch[guid.value] = before + size
     return None
 
 
@@ -1187,7 +1193,9 @@ class Window(QMainWindow):
             self.status.setText("Wait for the scan to finish before deleting.")
             return
         bad = [(i, "Windows would act on a different file or device") for i in items if not self._safe_path(i.path)]
-        bad += [(i, why) for i in items if self._safe_path(i.path) and (why := recycle_refusal(i.path, i.size))]
+        batch = {}  # what the selection adds to each drive's Recycle Bin
+        bad += [(i, why) for i in items
+                if self._safe_path(i.path) and (why := recycle_refusal(i.path, i.size, batch))]
         if bad:
             items = [i for i in items if all(i is not b for b, _ in bad)]
             self.status.setText(f"Can't recycle {bad[0][0].name!r}: {bad[0][1]}. Use Explorer for this one.")
