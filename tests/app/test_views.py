@@ -294,12 +294,11 @@ def test_keyboard_only(window, work, dialogs):
     QTest.keyClick(window.path, Qt.Key_Return)
     h.wait_until(lambda: h.scan_finished(window), 30)
     order = []
-    window.activateWindow()
-    window.path.setFocus()
+    window.path.setFocus()  # Qt focus only: the window is never activated by the test
     for _ in range(12):  # Tab walks through every control without getting stuck
-        QTest.keyClick(QGuiApplication.focusObject(), Qt.Key_Tab)
+        QTest.keyClick(window.focusWidget() or window, Qt.Key_Tab)
         h.pump(5)
-        order.append(type(QGuiApplication.focusObject()).__name__)
+        order.append(type(window.focusWidget()).__name__)
     assert "QTreeView" in order
     window.tree.setFocus()
     window.tree.setCurrentIndex(window.model.index_for(window.scanner.root))
@@ -371,10 +370,7 @@ def test_clipboard_1000_paths_and_unicode(window, work):
         assert sorted(pasted) == sorted([root.files[0].path, root.files[1].path]), pasted
     finally:
         n.kill()
-    window.activateWindow()  # shortcuts only fire in the active window (Notepad took it)
-    h.wait_until(window.isActiveWindow, 10, "Bigfoot active again")
-    window.tree.setFocus()  # (keys reach the shortcut only through the focused widget)
-    h.wait_until(lambda: QApplication.focusWidget() is window.tree, 10, "tree focused")
+    window.tree.setFocus()  # (Ctrl+C is handled by the tree's own key events: no activation needed)
     # nothing selected: clipboard untouched
     QGuiApplication.clipboard().setText("keep me")
     window.tree.clearSelection()

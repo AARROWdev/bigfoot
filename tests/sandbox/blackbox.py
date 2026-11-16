@@ -24,7 +24,7 @@ try:
     import win32ui  # noqa: F401  (needs the MFC runtime, which Windows Sandbox doesn't have)
 except ImportError:
     sys.modules["win32ui"] = types.ModuleType("win32ui")  # pywinauto only uses it for screenshots
-from pywinauto import Application, Desktop, keyboard  # noqa: E402
+from pywinauto import Application, Desktop  # noqa: E402
 
 OUT = r"C:\out"
 RESULTS = os.path.join(OUT, "blackbox-results.txt")
@@ -71,19 +71,6 @@ class Bigfoot:
         self.app = Application(backend="uia").connect(process=self.proc.pid)
         self.win = self.app.window(handle=self.hwnd)
         time.sleep(1)
-
-    def focus(self):
-        try:
-            self.win.set_focus()
-        except Exception:
-            pass
-        time.sleep(0.3)
-
-    def keys(self, k):
-        """Key presses posted to the window as messages (with the modifier state set), not SendInput: whether
-        SendInput reaches a Sandbox depends on which window has the keyboard on the host."""
-        self.focus()
-        Application(backend="win32").connect(handle=self.hwnd).window(handle=self.hwnd).send_keystrokes(k)
 
     def texts(self):
         return [c.window_text() for c in self.win.descendants(control_type="Text")]
@@ -195,11 +182,7 @@ def wizard(setup):
         tasks = [c for c in shown if "CheckListBox" in c.class_name()]
         if tasks and not ticked:  # "Select Additional Tasks": tick "Create a desktop shortcut" (the only task)
             r = tasks[0].rectangle()
-            # the list starts with a group heading; Home selects the first task (the desktop shortcut), Space
-            # ticks it. Posted as window messages: SendInput depends on the host's keyboard focus.
-            if not tick_desktop_task():
-                tasks[0].set_focus()
-                tasks[0].send_keystrokes("{HOME}{SPACE}")
+            tick_desktop_task()  # (no keyboard fallback: nothing here may use focus or key input)
             ticked = True
             log("ticked the desktop shortcut task", r)
             time.sleep(0.5)
@@ -257,8 +240,8 @@ def all_tests(exe):
         b = Bigfoot(exe)
         s = b.scan(root)
         check("BB scan through the UI", s.startswith(f"Scanned {root}") and "15 files" in s, s)
-        win32gui.ShowWindow(b.hwnd, win32con.SW_RESTORE)
-        win32gui.MoveWindow(b.hwnd, 77, 66, 1111, 701, True)
+        win32gui.ShowWindow(b.hwnd, win32con.SW_SHOWNOACTIVATE)  # never activate anything
+        win32gui.SetWindowPos(b.hwnd, 0, 77, 66, 1111, 701, win32con.SWP_NOACTIVATE | win32con.SWP_NOZORDER)
         time.sleep(0.5)
         r1 = win32gui.GetWindowRect(b.hwnd)
         check("BB closes cleanly", b.close() == 0)

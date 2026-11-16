@@ -7,7 +7,8 @@ import sys
 import time
 
 import pytest
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
 
@@ -74,7 +75,7 @@ def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch,
             elif r < 0.55:
                 QTest.mouseDClick(target, Qt.LeftButton, Qt.NoModifier, pos)
             elif r < 0.6:
-                QTest.mouseMove(target, pos)
+                QApplication.sendEvent(target, QMouseEvent(QEvent.MouseMove, QPointF(pos), QPointF(target.mapToGlobal(pos)), Qt.NoButton, Qt.NoButton, Qt.NoModifier))
             else:
                 k = rnd.choice(keys)
                 mod = Qt.ControlModifier if rnd.random() < 0.1 else Qt.NoModifier

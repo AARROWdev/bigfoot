@@ -57,6 +57,21 @@ Get-Process WindowsSandbox* -ErrorAction SilentlyContinue | Stop-Process -Force
 for ($i = 0; $i -lt 30 -and (Get-Process WindowsSandbox* -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
 Start-Sleep 5
 Start-Process "$out\bigfoot.wsb"
+# Keep the Sandbox window minimized and never activate it: the PC's owner keeps using their mouse and keyboard.
+# (SW_SHOWMINNOACTIVE = 7. The client can re-show itself while it connects, so watch it for 2 minutes.)
+Add-Type -Namespace BfWin -Name U -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+'@
+$until = (Get-Date).AddSeconds(120)
+while ((Get-Date) -lt $until) {
+    foreach ($p in Get-Process WindowsSandboxClient -ErrorAction SilentlyContinue) {
+        if ($p.MainWindowHandle -ne 0 -and -not [BfWin.U]::IsIconic($p.MainWindowHandle)) {
+            [void][BfWin.U]::ShowWindow($p.MainWindowHandle, 7)
+        }
+    }
+    Start-Sleep -Milliseconds 300
+}
 Write-Host "Sandbox started; results in $out"
 if ($NoWait) { $out; exit 0 }
 $done = "$out\DONE"
