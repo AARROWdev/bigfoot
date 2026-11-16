@@ -1042,7 +1042,8 @@ class Window(QMainWindow):
     def usable(self, it):
         if self._safe_path(it.path):
             return True
-        self.status.setText(f"Can't open {it.name!r}: Windows would act on a different file. Use Explorer for this one.")
+        self.status.setText(f"Can't open {it.name!r}: Windows would act on a different file or device. "
+                            "Use Explorer for this one.")
         return False
 
     def toggle_files(self, on):
@@ -1159,7 +1160,7 @@ class Window(QMainWindow):
         bad = [i for i in items if not self._safe_path(i.path)]
         if bad:
             items = [i for i in items if i not in bad]
-            self.status.setText(f"Can't recycle {bad[0].name!r}: Windows would act on a different file. "
+            self.status.setText(f"Can't recycle {bad[0].name!r}: Windows would act on a different file or device. "
                                 "Use Explorer for this one.")
             if not items:
                 return
@@ -1197,12 +1198,14 @@ class Window(QMainWindow):
                             (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else "") +
                             (f"  ·  skipped {bad[0].name!r} (use Explorer)" if bad else ""))
 
-    @staticmethod
-    def _safe_path(path):
+    DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"{p}{n}" for p in ("COM", "LPT") for n in "123456789¹²³")}
+
+    @classmethod
+    def _safe_path(cls, path):
         """False if any folder or name in the path is one Windows silently rewrites (trailing '.' or ' ',
-        unpaired surrogates): open / recycle would act on a sibling."""
+        unpaired surrogates: open / recycle would act on a sibling) or reads as a device (CON, NUL.txt, COM1)."""
         for name in path.split("\\")[1:]:
-            if name.endswith((".", " ")):
+            if name.endswith((".", " ")) or name.split(".")[0].rstrip(" ").upper() in cls.DEVICES:
                 return False
             try:
                 name.encode("utf-16-le")
