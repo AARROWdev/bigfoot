@@ -2,6 +2,8 @@
 
 **Find what's eating your disk.** A fast disk space analyzer for Windows.
 
+![Bigfoot treemap](docs/map.png)
+
 ## Download
 Windows 10/11, 64-bit. From the [latest release](https://github.com/AARROWdev/bigfoot/releases/latest):
 - **BigfootSetup-<version>.exe** (recommended): installs to Program Files with a Start Menu entry. Run it again to upgrade; it closes Bigfoot if it's open.
@@ -20,6 +22,10 @@ Settings > Apps > Bigfoot > Uninstall (portable: delete the folder). Your settin
 - **Top 100 files:** the biggest files under the selected folder
 - **Actions:** open, show in Explorer, copy path, scan only this folder, send to Recycle Bin (totals update on the spot)
 - Drive picker with used/free bar
+
+| Types | Top 100 files |
+|---|---|
+| ![Types](docs/types.png) | ![Top 100 files](docs/top.png) |
 
 ## Keys
 | Key | Action |
@@ -41,6 +47,12 @@ winget install JRSoftware.InnoSetup   # installer compiler
 ```
 `Bigfoot.bat` runs it from source. `tests\sandbox\run-sandbox.ps1` tests the installer (install, upgrade while running, uninstall) in a throwaway Windows Sandbox.
 Settings live in the registry (`HKCU\Software\Bigfoot`); `error.log` is in `%LOCALAPPDATA%\Bigfoot\`.
+
+## How it was built
+Built with [Claude Code](https://claude.com/claude-code). Every change was reviewed by a separate AI reviewer session against a written spec (what must work, what counts as a bug), looped until zero findings, and the installer is tested end to end (install, upgrade while running, uninstall) in a throwaway Windows Sandbox.
+
+## License
+[MIT](LICENSE)
 
 ## Later
 - NTFS master file table reader (whole-drive scans in seconds, needs admin)
