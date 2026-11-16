@@ -770,7 +770,8 @@ class Window(QMainWindow):
 
     def eventFilter(self, obj, e):
         if obj is self.drives and (e.type() == QEvent.Wheel or (
-                e.type() == QEvent.KeyPress and e.text().isprintable() and e.text()) or (  # type-to-search
+                e.type() == QEvent.KeyPress and e.text().isprintable() and e.text()  # type-to-search
+                and e.key() != Qt.Key_Space) or (  # Space opens the list
                 e.type() == QEvent.KeyPress and e.key() in (
                 Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End)
                 and not (e.key() == Qt.Key_Down and e.modifiers() & Qt.AltModifier))):  # Alt+Down opens the list
