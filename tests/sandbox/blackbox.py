@@ -1,0 +1,314 @@
+"""Black-box tests against the INSTALLED Bigfoot.exe, driven through Windows UI Automation like a user would.
+Runs inside Windows Sandbox only (tests/sandbox/inside.ps1).
+
+    blackbox.py wizard <setup.exe>        click through the setup wizard, ticking the desktop shortcut
+    blackbox.py title <Bigfoot.exe> <t>   start it, check the window title, close it
+    blackbox.py all <Bigfoot.exe>         settings remembered, two copies at once, bad %LOCALAPPDATA%,
+                                          copy a path and paste it into Notepad, no error.log, the mutex
+    blackbox.py portable <Bigfoot.exe>    the unzipped portable copy starts and scans
+"""
+import ctypes
+import os
+import subprocess
+import sys
+import time
+import traceback
+
+import types
+
+import win32con
+import win32gui
+import win32process
+
+try:
+    import win32ui  # noqa: F401  (needs the MFC runtime, which Windows Sandbox doesn't have)
+except ImportError:
+    sys.modules["win32ui"] = types.ModuleType("win32ui")  # pywinauto only uses it for screenshots
+from pywinauto import Application, Desktop, keyboard  # noqa: E402
+
+OUT = r"C:\out"
+RESULTS = os.path.join(OUT, "blackbox-results.txt")
+if os.environ.get("USERNAME", "").upper() != "WDAGUTILITYACCOUNT":
+    sys.exit("black-box tests run only inside Windows Sandbox")
+
+
+LOG = open(os.path.join(OUT, "blackbox.log"), "a", encoding="utf-8")
+sys.stdout = sys.stderr = LOG  # everything, tracebacks included, goes to the log (UTF-8)
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def wait(cond, timeout=60, what="condition", step=0.25):
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            v = cond()
+            if v:
+                return v
+        except Exception:
+            pass
+        time.sleep(step)
+    raise TimeoutError(what)
+
+
+def windows_of(pid, title_prefix="Bigfoot"):
+    found = []
+
+    def cb(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd).startswith(title_prefix):
+            if win32process.GetWindowThreadProcessId(hwnd)[1] == pid:
+                found.append(hwnd)
+    win32gui.EnumWindows(cb, None)
+    return found
+
+
+class Bigfoot:
+    def __init__(self, exe, env=None):
+        self.proc = subprocess.Popen([exe], env=env)
+        self.hwnd = wait(lambda: (windows_of(self.proc.pid) or [None])[0], 60, "Bigfoot window")
+        self.app = Application(backend="uia").connect(process=self.proc.pid)
+        self.win = self.app.window(handle=self.hwnd)
+        time.sleep(1)
+
+    def focus(self):
+        try:
+            self.win.set_focus()
+        except Exception:
+            pass
+        time.sleep(0.3)
+
+    def keys(self, k):
+        """Real key presses when this Sandbox has the keyboard; otherwise post them to the window (the host's
+        focus decides whether SendInput reaches a Sandbox, so tests must not depend on it)."""
+        self.focus()
+        try:
+            keyboard.send_keys(k, with_spaces=True)
+        except RuntimeError:  # "SendInput() inserted only 0 ..."
+            Application(backend="win32").connect(handle=self.hwnd).window(handle=self.hwnd).send_keystrokes(k)
+
+    def texts(self):
+        return [c.window_text() for c in self.win.descendants(control_type="Text")]
+
+    def status(self):
+        for t in self.texts():
+            if t.startswith(("Scanned", "Stopped", "Scanning", "Pick a drive", "Not a folder", "Copied", "Sent")):
+                return t
+        return ""
+
+    def scan(self, path, timeout=120):
+        edit = self.win.child_window(control_type="Edit", found_index=0)
+        edit.set_edit_text(path)  # through UI Automation: works for any text and without keyboard focus
+        self.win.child_window(title="Scan", control_type="Button").invoke()
+        return wait(lambda: self.status().startswith(("Scanned", "Stopped")) and self.status(), timeout, f"scan {path}")
+
+    def path_text(self):
+        return self.win.child_window(control_type="Edit", found_index=0).get_value()
+
+    def close(self, timeout=30):
+        win32gui.PostMessage(self.hwnd, win32con.WM_CLOSE, 0, 0)
+        self.proc.wait(timeout)
+        return self.proc.returncode
+
+
+def make_tree(root, n_dirs=3, n_files=5, name="f"):
+    for d in range(n_dirs):
+        p = os.path.join(root, f"d{d}")
+        os.makedirs(p, exist_ok=True)
+        for f in range(n_files):
+            with open(os.path.join(p, f"{name}{f}.bin"), "wb") as fh:
+                fh.write(b"x" * (100 * (f + 1)))
+    return root
+
+
+results = []
+
+
+def check(name, ok, detail=""):
+    results.append(f"{'PASS' if ok else 'FAIL'}  {name}{('  (' + detail + ')') if detail and not ok else ''}")
+    log(results[-1])
+
+
+def run_check(name, fn):
+    try:
+        fn()
+    except Exception as e:
+        check(name, False, f"{type(e).__name__}: {e}")
+        traceback.print_exc()
+    finally:  # a failed check must not leave a Bigfoot open (the uninstall test would be refused)
+        subprocess.run(["taskkill", "/f", "/im", "Bigfoot.exe"], capture_output=True)
+        subprocess.run(["taskkill", "/f", "/im", "notepad.exe"], capture_output=True)
+        time.sleep(1)
+
+
+# ------------------------------------------------------------------ modes
+def wizard(setup):
+    proc = subprocess.Popen([setup, "/LOG=" + os.path.join(OUT, "wizard.log")])
+    d = Desktop(backend="win32")
+    ticked = False
+    for _ in range(25):
+        try:
+            w = wait(lambda: d.window(title_re="Setup - Bigfoot.*").wrapper_object(), 20, "setup wizard")
+        except TimeoutError:
+            break
+        shown = [c for c in w.descendants() if c.is_visible()]
+        log("page:", [(c.class_name(), c.window_text()[:40]) for c in shown if c.window_text()
+                      or "Check" in c.class_name()])
+        tasks = [c for c in shown if "CheckListBox" in c.class_name()]
+        if tasks and not ticked:  # "Select Additional Tasks": tick "Create a desktop shortcut" (the only task)
+            r = tasks[0].rectangle()
+            tasks[0].click(coords=(12, 12))  # the first item's check box (window messages, not SendInput)
+            ticked = True
+            log("ticked the desktop shortcut task", r)
+            time.sleep(0.5)
+        btns = {c.window_text().replace("&", "").rstrip(" >"): c for c in shown
+                if "Button" in c.class_name() and c.is_enabled()}
+        for cap in ("Install", "Next", "Finish"):
+            if cap in btns:
+                log("click", cap)
+                btns[cap].click()
+                break
+        else:
+            time.sleep(1)
+            continue
+        if cap == "Finish":
+            break
+        time.sleep(1.5)
+    proc.wait(120)
+    # Finish launches Bigfoot (the "Launch Bigfoot" box is ticked): close it so it saves its settings
+    pid = wait(lambda: next((p for p in _pids("Bigfoot.exe")), None), 30, "Bigfoot launched by Finish")
+    hwnd = wait(lambda: (windows_of(pid) or [None])[0], 60, "its window")
+    time.sleep(2)
+    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+    wait(lambda: pid not in _pids("Bigfoot.exe"), 30, "Bigfoot to close")
+    return proc.returncode
+
+
+def _pids(name):
+    out = subprocess.run(["tasklist", "/fi", f"imagename eq {name}", "/fo", "csv", "/nh"], capture_output=True,
+                         text=True).stdout
+    return [int(l.split('","')[1]) for l in out.splitlines() if l.startswith('"')]
+
+
+def title(exe, want):
+    b = Bigfoot(exe)
+    t = win32gui.GetWindowText(b.hwnd)
+    b.close()
+    log("title", repr(t))
+    return 0 if t == want else 1
+
+
+def portable(exe):
+    root = make_tree(r"C:\bbtest\portable")
+    b = Bigfoot(exe)
+    s = b.scan(root)
+    b.close()
+    log(s)
+    return 0 if s.startswith(f"Scanned {root}") and "15 files" in s else 1
+
+
+def all_tests(exe):
+    lad = os.path.join(os.environ["LOCALAPPDATA"], "Bigfoot", "error.log")
+
+    def remembered():
+        root = make_tree(r"C:\bbtest\remember")
+        b = Bigfoot(exe)
+        s = b.scan(root)
+        check("BB scan through the UI", s.startswith(f"Scanned {root}") and "15 files" in s, s)
+        win32gui.ShowWindow(b.hwnd, win32con.SW_RESTORE)
+        win32gui.MoveWindow(b.hwnd, 77, 66, 1111, 701, True)
+        time.sleep(0.5)
+        r1 = win32gui.GetWindowRect(b.hwnd)
+        check("BB closes cleanly", b.close() == 0)
+        b = Bigfoot(exe)
+        r2 = win32gui.GetWindowRect(b.hwnd)
+        check("BB window size and position remembered", r1 == r2, f"{r1} vs {r2}")
+        check("BB last folder remembered", b.path_text() == root, b.path_text())
+        b.close()
+
+    def two_copies():
+        big = r"C:\bbtest\big"
+        for d in range(300):
+            make_tree(os.path.join(big, f"g{d}"), 10, 20)
+        small = make_tree(r"C:\bbtest\small")
+        b1, b2 = Bigfoot(exe), Bigfoot(exe)
+        b1.win.child_window(control_type="Edit", found_index=0).set_edit_text(big)
+        b1.win.child_window(title="Scan", control_type="Button").invoke()
+        time.sleep(0.3)
+        s2 = b2.scan(small)
+        rc = b1.close()  # mid-scan (or right after)
+        check("BB two copies at once: second one scans", s2.startswith(f"Scanned {small}"), s2)
+        check("BB closing a copy mid-scan exits cleanly", rc == 0, f"exit {rc}")
+        s2 = b2.scan(big, 300)
+        check("BB the other copy keeps working", s2.startswith(f"Scanned {big}") and "60,000 files" in s2, s2)
+        b2.close()
+
+    def bad_localappdata():
+        for case, val in (("a file", r"C:\bbtest\notafolder.txt"), ("a missing drive", r"Q:\nope")):
+            open(r"C:\bbtest\notafolder.txt", "w").close()
+            env = dict(os.environ, LOCALAPPDATA=val)
+            try:
+                b = Bigfoot(exe, env)
+                alive = b.proc.poll() is None
+                b.close()
+                check(f"BB starts when %LOCALAPPDATA% is {case}", alive)
+            except TimeoutError:
+                p = subprocess.run(["tasklist"], capture_output=True, text=True).stdout
+                check(f"BB starts when %LOCALAPPDATA% is {case}", False, "no window within 60 s")
+                subprocess.run(["taskkill", "/f", "/im", "Bigfoot.exe"], capture_output=True)
+
+    def paste_into_notepad():
+        root = make_tree(r"C:\bbtest\пример 日本 😀", 1, 2)
+        b = Bigfoot(exe)
+        b.scan(root)
+        tree = b.win.child_window(control_type="Tree", found_index=0)
+        first = tree.descendants(control_type="TreeItem")[0]
+        first.select()
+        first.set_focus()
+        time.sleep(0.3)
+        b.keys("^c")
+        time.sleep(0.5)
+        check("BB Ctrl+C status", b.status() == "Copied 1 path", b.status())
+        n = subprocess.Popen(["notepad.exe"])
+        nw = Application(backend="win32").connect(process=n.pid).window(class_name="Notepad")
+        nw.wait("ready", 30)
+        ed = nw.child_window(class_name="Edit")
+        ed.send_message(0x0302, 0, 0)  # WM_PASTE
+        time.sleep(0.5)
+        txt = ed.window_text()
+        check("BB path pasted into Notepad matches", txt == root, repr(txt))
+        n.kill()
+        b.close()
+
+    def mutex():
+        b = Bigfoot(exe)
+        k32 = ctypes.windll.kernel32
+        k32.OpenMutexW.restype = ctypes.c_void_p
+        h = k32.OpenMutexW(0x00100000, False, "BigfootAppMutex")
+        check("BB app mutex held while running (uninstaller relies on it)", bool(h))
+        if h:
+            k32.CloseHandle(ctypes.c_void_p(h))
+        b.close()
+
+    for name, fn in (("remembered", remembered), ("two copies", two_copies), ("bad LOCALAPPDATA", bad_localappdata),
+                     ("notepad", paste_into_notepad), ("mutex", mutex)):
+        log("---", name)
+        run_check(f"BB {name}", fn)
+    check("BB no error.log after normal use", not os.path.exists(lad) or os.path.getsize(lad) == 0,
+          open(lad, encoding="utf-8", errors="replace").read()[-800:] if os.path.exists(lad) else "")
+    with open(RESULTS, "a", encoding="utf-8") as f:
+        f.write("\n".join(results) + "\n")
+    return 0 if all(r.startswith("PASS") for r in results) else 1
+
+
+if __name__ == "__main__":
+    mode = sys.argv[1]
+    try:
+        rc = {"wizard": lambda: wizard(sys.argv[2]), "title": lambda: title(sys.argv[2], sys.argv[3]),
+              "all": lambda: all_tests(sys.argv[2]), "portable": lambda: portable(sys.argv[2])}[mode]()
+    except Exception:
+        traceback.print_exc()
+        rc = 3
+    log("exit", rc)
+    sys.exit(rc)
