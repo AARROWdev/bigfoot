@@ -134,7 +134,12 @@ def test_whole_c_drive_and_memory_released(window, record_property):
     record_property("c_drive_scan_seconds", round(secs, 1))
     record_property("c_drive_rss_mb", [round(m0 / 2**20), round(m1 / 2**20), round(m2 / 2**20)])
     print(f"\nC:\\ scan {secs:.1f}s, RSS {m0 / 2**20:.0f} -> {m1 / 2**20:.0f} -> {m2 / 2**20:.0f} MB")
-    assert m2 - m0 < (m1 - m0) * 1.6 + 50 * 2**20, "the first scan's tree wasn't released"
+    # RSS can't show a leak (Python keeps freed memory for reuse), so count the live folder objects instead:
+    # after the rescan only the second scan's folders may exist.
+    live = sum(1 for o in gc.get_objects() if type(o) is bf.Dir)
+    now = window.scanner.root.ndirs + 1
+    record_property("c_drive_live_dirs_vs_tree", [live, now])
+    assert live <= now * 1.01 + 10, f"{live} folder objects alive, the current tree has {now}: the first scan leaked"
 
 
 # 31

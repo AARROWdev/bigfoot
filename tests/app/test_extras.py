@@ -350,6 +350,9 @@ def test_rescans_do_not_leak(window, work):
     h.pump(100)
     m2 = proc.memory_info().rss
     assert m2 - m1 < 40 * 2**20, f"memory grew {(m2 - m1) / 2**20:.0f} MB over 20 rescans"
+    live = sum(1 for o in gc.get_objects() if type(o) in (bf.Dir, bf.File))
+    tree = window.scanner.root.ndirs + 1 + window.scanner.root.nfiles
+    assert live <= tree + 10, f"{live} folder/file objects alive after 20 rescans; the tree has {tree}"
 
 
 # G8: strange timestamps sort and display
