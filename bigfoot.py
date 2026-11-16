@@ -674,6 +674,7 @@ class Window(QMainWindow):
         self.crumb = QLabel("")
         self.crumb.setObjectName("crumb")
         self.crumb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.crumb.installEventFilter(self)  # re-elide whenever the crumb itself is resized
         crumb.addWidget(self.btn_up)
         crumb.addWidget(self.crumb, 1)
         ml.addLayout(crumb)
@@ -710,7 +711,6 @@ class Window(QMainWindow):
         self.split.addWidget(self.tabs)
         self.split.setStretchFactor(0, 3)
         self.split.setStretchFactor(1, 2)
-        self.split.splitterMoved.connect(lambda *_: self.update_crumb())
 
         central = QWidget()
         cl = QVBoxLayout(central)
@@ -770,9 +770,12 @@ class Window(QMainWindow):
 
     def eventFilter(self, obj, e):
         if obj is self.drives and (e.type() == QEvent.Wheel or (
-                e.type() == QEvent.KeyPress and not e.modifiers() & Qt.AltModifier and e.key() in (
-                Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End))):
+                e.type() == QEvent.KeyPress and e.key() in (
+                Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End)
+                and not (e.key() == Qt.Key_Down and e.modifiers() & Qt.AltModifier))):  # Alt+Down opens the list
             return True
+        if obj is getattr(self, "crumb", None) and e.type() == QEvent.Resize:
+            self.update_crumb()
         return super().eventFilter(obj, e)
 
     def fill_drives(self):
@@ -841,13 +844,14 @@ class Window(QMainWindow):
             p += "\\"
         remote = p.startswith("\\\\") or (p[1:2] == ":" and ctypes.windll.kernel32.GetDriveTypeW(p[:2] + "\\") == 4)
         found = []  # a network path is probed off the GUI thread: an offline share would freeze the window
-        probe = threading.Thread(target=lambda: found.append(os.path.isdir(p)), daemon=True)
+        probe = threading.Thread(target=lambda: found.append((os.path.isdir(p), QStorageInfo(p))), daemon=True)
         probe.start()
         probe.join(3 if remote else None)
         if not found:
             self.status.setText(f"Network drive not responding: {p}")
             return
-        if not found[0]:
+        isdir, info = found[0]
+        if not isdir:
             self.status.setText(f"Not a folder: {p}")
             return
         p = os.path.abspath(p)
@@ -855,7 +859,7 @@ class Window(QMainWindow):
         self.settings.setValue("last_path", p)
         self.scanner = Scanner(p)
         self.scanner.finished.connect(self.scan_done, Qt.QueuedConnection)
-        t = 0 if remote else QStorageInfo(p).bytesTotal()
+        t = info.bytesTotal()
         self.model.drive_total = t if t > 0 else 0  # -1 on UNC paths
         for tbl in (self.types, self.top):
             tbl.clearSelection()
@@ -866,22 +870,19 @@ class Window(QMainWindow):
         self.set_focus(self.scanner.root)
         self.btn_scan.setText("Stop")
         self.btn_scan.setEnabled(True)
-        if remote:
-            self.usage.hide()
-        else:
-            self.show_usage(p)
+        self.show_usage(info)
         self.sync_drive(p)
         self.scanner.start()
         self.tick.start()
         self.live.start()
 
     def sync_drive(self, p):
+        self.drives.setCurrentIndex(-1)  # no listed drive (UNC path, folder mount): show none, not a wrong one
         for i in range(self.drives.count()):
             if p.upper().startswith(self.drives.itemData(i).upper()):
                 self.drives.setCurrentIndex(i)
 
-    def show_usage(self, p):
-        v = QStorageInfo(p)
+    def show_usage(self, v):
         if not v.isValid() or v.bytesTotal() <= 0:
             self.usage.hide()
             return
@@ -1235,11 +1236,6 @@ class Window(QMainWindow):
                 return True
             it = it.parent
         return False
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if hasattr(self, "crumb"):
-            self.update_crumb()
 
     def closeEvent(self, e):
         if self.scanner:
