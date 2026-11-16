@@ -174,6 +174,8 @@ class Scanner(QObject):
         self.current = path
         self.t0 = self.t1 = 0
         self.n = threads
+        self.go = threading.Event()  # cleared while the window redraws: see Window.live_refresh
+        self.go.set()
 
     def start(self):
         self.t0 = time.time()
@@ -213,7 +215,9 @@ class Scanner(QObject):
         own, nf = 0, 0
         try:
             with os.scandir(long_path(d.path)) as it:
-                for e in it:
+                for n, e in enumerate(it):
+                    if not n & 255:
+                        self.go.wait()
                     try:
                         if e.is_symlink() or e.is_junction():
                             continue
@@ -977,8 +981,13 @@ class Window(QMainWindow):
         self.update_crumb()
 
     def live_refresh(self):
-        if self.scanner and not self.scanner.t1:
+        s = self.scanner
+        if s and not s.t1:
+            # the scanner threads share Python's GIL with this one: hold them while the tree is rebuilt and
+            # redrawn, or the window stalls for seconds on a big drive
+            s.go.clear()
             self.rebuild()
+            QTimer.singleShot(60, s.go.set)
 
     def scan_done(self, s):
         if s is not self.scanner:
