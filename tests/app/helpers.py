@@ -188,13 +188,20 @@ def find_dir(root_dir, path):
 
 
 # ------------------------------------------------------------------ Qt driving
+def _run_loop(ms):
+    """Run the real (blocking) event loop for ms milliseconds, as the app does: the event dispatcher then
+    reports idle time, which is when Bigfoot lets its scanner threads run (Window.gui_idle)."""
+    loop = QEventLoop()
+    QTimer.singleShot(max(1, int(ms)), loop.quit)
+    loop.exec()
+
+
 def pump(ms=0):
     end = time.time() + ms / 1000
     while True:
-        QApplication.processEvents(QEventLoop.AllEvents, 20)
+        _run_loop(min(10, max(1, (end - time.time()) * 1000)))
         if time.time() >= end:
             return
-        time.sleep(0.002)
 
 
 def reachable(path, timeout=10):
@@ -212,8 +219,7 @@ def wait_until(cond, timeout=120, msg="condition"):
     while not cond():
         if time.time() > end:
             raise TimeoutError(f"timed out after {timeout}s waiting for {msg}")
-        QApplication.processEvents(QEventLoop.AllEvents, 20)
-        time.sleep(0.002)
+        _run_loop(5)
 
 
 def scan_finished(w):

@@ -25,19 +25,24 @@ class Watchdog:
     def __init__(self):
         self.last = time.time()
         self.worst = 0.0
+        self.doing = self.worst_doing = ""
+        self.slow = []  # (seconds, what) for every gap over 1 s
         self.t = QTimer(interval=50, timeout=self.beat)
         self.t.start()
 
     def beat(self):
         now = time.time()
-        self.worst = max(self.worst, now - self.last)
+        if now - self.last > 1.0:
+            self.slow.append((round(now - self.last, 2), self.doing))
+        if now - self.last > self.worst:
+            self.worst, self.worst_doing = now - self.last, self.doing
         self.last = now
 
 
 # 29
 @pytest.mark.sandbox
 @pytest.mark.parametrize("seed,steps", [(1, 500), (2, 500), (3, 500), (4, 3000)])
-def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch, seed, steps):
+def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch, seed, steps, record_property):
     rnd = random.Random(seed)
     for i in range(25):
         h.make_tree(os.path.join(work, f"d{i}"), {f"s{j}": {f"f{k}.{rnd.choice(['mp4', 'txt', 'zip', 'bin'])}": rnd.randint(0, 9000)
@@ -69,6 +74,9 @@ def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch,
                 target = window
             pos = QPoint(rnd.randrange(max(1, target.width())), rnd.randrange(max(1, target.height())))
             r = rnd.random()
+            scanning = bool(window.scanner and not window.scanner.t1)
+            dog.doing = f"step {n}: r={r:.2f} on {type(target).__name__} at {pos.x()},{pos.y()}" \
+                f"{' while scanning ' + window.scanner.root.path if scanning else ''}"
             if r < 0.45:
                 QTest.mouseClick(target, rnd.choice([Qt.LeftButton] * 4 + [Qt.RightButton]),
                                  rnd.choice([Qt.NoModifier] * 4 + [Qt.ControlModifier, Qt.ShiftModifier]), pos)
@@ -78,6 +86,7 @@ def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch,
                 QApplication.sendEvent(target, QMouseEvent(QEvent.MouseMove, QPointF(pos), QPointF(target.mapToGlobal(pos)), Qt.NoButton, Qt.NoButton, Qt.NoModifier))
             else:
                 k = rnd.choice(keys)
+                dog.doing += f" key {k}"
                 mod = Qt.ControlModifier if rnd.random() < 0.1 else Qt.NoModifier
                 fw = QApplication.focusWidget() or window
                 if fw is window.path and k == Qt.Key_A:
@@ -93,7 +102,8 @@ def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch,
     finally:
         closer.stop()
         answers.stop()
-    assert dog.worst < 2.0, f"the window froze for {dog.worst:.1f}s"
+    record_property("slow_gaps", dog.slow)
+    assert dog.worst < 2.0, f"the window froze for {dog.worst:.1f}s during {dog.worst_doing}; all >1 s: {dog.slow}"
     assert window.isVisible()
     root = h.scan(window, work)  # still works, and totals match what's on disk
     assert (root.size, root.nfiles) == h.truth(work)[work][:2]
