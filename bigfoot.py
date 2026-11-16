@@ -11,8 +11,8 @@ import threading
 import time
 import traceback
 
-from PySide6.QtCore import (QAbstractItemModel, QEvent, QItemSelectionModel, QModelIndex, QObject, QPointF,
-                            QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
+from PySide6.QtCore import (QAbstractItemModel, QByteArray, QEvent, QItemSelectionModel, QModelIndex, QObject,
+                            QPointF, QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
 from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QKeySequence,
                            QLinearGradient, QPainter, QPalette, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFileIconProvider,
@@ -737,26 +737,24 @@ class Window(QMainWindow):
         QShortcut(QKeySequence("Ctrl+L"), self, lambda: (self.path.setFocus(), self.path.selectAll()))
         QShortcut(QKeySequence("Backspace"), self.map, self.map_up).setContext(Qt.WidgetShortcut)
 
-        g = self.settings.value("geometry")
-        if g:
-            self.restoreGeometry(g)
-        else:
+        # saved layout: anything that isn't a valid Qt state (damaged or edited settings) falls back to defaults
+        def state(key):
+            v = self.settings.value(key)
+            return v if isinstance(v, (QByteArray, bytes)) else None
+        if not (state("geometry") and self.restoreGeometry(state("geometry"))):
             ag = self.screen().availableGeometry()
             self.resize(min(1500, ag.width() - 40), min(900, ag.height() - 60))
-        s = self.settings.value("split")
-        if s:
-            self.split.restoreState(s)
-        else:
+        if not (state("split") and self.split.restoreState(state("split"))):
             self.split.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
-        h = self.settings.value("header2")
-        if h:
-            self.tree.header().restoreState(h)
+        if state("header2"):
+            self.tree.header().restoreState(state("header2"))
 
         if start:
             self.path.setText(start)
             QTimer.singleShot(0, self.scan)
         else:
-            self.path.setText(self.settings.value("last_path") or "C:\\")
+            last = self.settings.value("last_path")
+            self.path.setText(last if isinstance(last, str) and last else "C:\\")
 
     # ---------- helpers
     def setup_table(self, t):
