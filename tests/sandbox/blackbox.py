@@ -147,13 +147,18 @@ def tick_desktop_task():
         w = Desktop(backend="uia").window(title_re="Setup - Bigfoot.*")
         for it in w.descendants():
             if "desktop" in it.window_text().lower():
-                try:
-                    if it.get_toggle_state() == 0:
-                        it.toggle()
-                    log("UIA toggle state now", it.get_toggle_state())
-                    return it.get_toggle_state() == 1
-                except Exception as e:  # noqa: BLE001
-                    log("no toggle on", it.element_info.control_type, e)
+                for how in ("toggle", "legacy"):  # Toggle pattern, else the MSAA default action ("Check")
+                    try:
+                        if how == "toggle":
+                            it.toggle()
+                        else:
+                            it.iface_legacy_iaccessible.DoDefaultAction()
+                        time.sleep(0.5)
+                        state = it.legacy_properties().get("State", 0)
+                        log("ticked via", how, "MSAA state", hex(state))
+                        return True  # (the desktop shortcut check after install is the real proof)
+                    except Exception as e:  # noqa: BLE001
+                        log("no", how, "on", it.element_info.control_type, e)
     except Exception as e:  # noqa: BLE001
         log("UIA tick failed", e)
     return False

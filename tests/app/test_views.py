@@ -371,6 +371,9 @@ def test_clipboard_1000_paths_and_unicode(window, work):
         assert sorted(pasted) == sorted([root.files[0].path, root.files[1].path]), pasted
     finally:
         n.kill()
+    window.activateWindow()  # shortcuts only fire in the active window (Notepad took it)
+    h.wait_until(window.isActiveWindow, 10, "Bigfoot active again")
+    window.tree.setFocus()  # (keys reach the shortcut only through the focused widget)
     # nothing selected: clipboard untouched
     QGuiApplication.clipboard().setText("keep me")
     window.tree.clearSelection()
