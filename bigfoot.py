@@ -770,6 +770,7 @@ class Window(QMainWindow):
 
     def eventFilter(self, obj, e):
         if obj is self.drives and (e.type() == QEvent.Wheel or (
+                e.type() == QEvent.KeyPress and e.text().isprintable() and e.text()) or (  # type-to-search
                 e.type() == QEvent.KeyPress and e.key() in (
                 Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End)
                 and not (e.key() == Qt.Key_Down and e.modifiers() & Qt.AltModifier))):  # Alt+Down opens the list
@@ -963,11 +964,8 @@ class Window(QMainWindow):
             msg += f"  ·  {s.denied:,} folders access denied (run as admin to count them)"
         self.status.setText(msg)
         self.refresh_tables()
-        cur = self.drives.currentData()
         self.fill_drives()
-        i = self.drives.findData(cur)
-        if i >= 0:
-            self.drives.setCurrentIndex(i)
+        self.sync_drive(s.root.path)
 
     # ---------- focus / selection
     def current_changed(self, cur, prev):
