@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import traceback
+import winreg
 
 from PySide6.QtCore import (QAbstractItemModel, QByteArray, QEvent, QItemSelectionModel, QModelIndex, QObject,
                             QPointF, QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
@@ -70,6 +71,32 @@ def long_path(p):
     if p.startswith("\\\\?\\"):
         return p
     return "\\\\?\\UNC\\" + p[2:] if p.startswith("\\\\") else "\\\\?\\" + p
+
+
+def recycle_refusal(path, size):
+    """Why Windows would delete this permanently instead of recycling it, or None. In those cases
+    QFile.moveToTrash deletes without a word and still reports success, so Bigfoot refuses up front."""
+    k32 = ctypes.windll.kernel32
+    vol, guid = ctypes.create_unicode_buffer(1024), ctypes.create_unicode_buffer(64)
+    if not (k32.GetVolumePathNameW(path, vol, 1024) and k32.GetVolumeNameForVolumeMountPointW(vol.value, guid, 64)):
+        return None  # not a local volume (share, subst, long path): moveToTrash refuses those by itself
+
+    def setting(key, name, hive=winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                return winreg.QueryValueEx(k, name)[0]
+        except OSError:
+            return None
+    policy = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    bin_key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume" + "\\" + guid.value[10:-1]
+    if (setting(policy, "NoRecycleFiles") or setting(policy, "NoRecycleFiles", winreg.HKEY_LOCAL_MACHINE)
+            or setting(bin_key, "NukeOnDelete")):
+        return "Windows is set to delete files on this drive instead of recycling them"
+    cap = setting(bin_key, "MaxCapacity")  # MB; Windows' default when it was never changed is 5% of the drive
+    cap = cap * 2**20 if cap else QStorageInfo(vol.value).bytesTotal() // 20
+    if size > cap:
+        return f"it's bigger than this drive's Recycle Bin ({human(cap)}), so Windows would delete it for good"
+    return None
 
 
 # ---------------------------------------------------------------- tree
@@ -1157,11 +1184,11 @@ class Window(QMainWindow):
         if self.scanner and not self.scanner.t1:
             self.status.setText("Wait for the scan to finish before deleting.")
             return
-        bad = [i for i in items if not self._safe_path(i.path)]
+        bad = [(i, "Windows would act on a different file or device") for i in items if not self._safe_path(i.path)]
+        bad += [(i, why) for i in items if self._safe_path(i.path) and (why := recycle_refusal(i.path, i.size))]
         if bad:
-            items = [i for i in items if i not in bad]
-            self.status.setText(f"Can't recycle {bad[0].name!r}: Windows would act on a different file or device. "
-                                "Use Explorer for this one.")
+            items = [i for i in items if all(i is not b for b, _ in bad)]
+            self.status.setText(f"Can't recycle {bad[0][0].name!r}: {bad[0][1]}. Use Explorer for this one.")
             if not items:
                 return
         total = sum(i.size for i in items)
@@ -1196,7 +1223,7 @@ class Window(QMainWindow):
         self.set_focus(self.focus)
         self.status.setText(f"Sent {len(items) - len(failed)} to the Recycle Bin" +
                             (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else "") +
-                            (f"  ·  skipped {bad[0].name!r} (use Explorer)" if bad else ""))
+                            (f"  ·  skipped {bad[0][0].name!r} (use Explorer)" if bad else ""))
 
     DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"{p}{n}" for p in ("COM", "LPT") for n in "123456789¹²³")}
 
