@@ -306,8 +306,17 @@ print("done", flush=True)
     binned = {os.path.relpath(e[0], work): e for e in h.recycle_bin_entries()}
     assert 0 < len(binned) < 400, len(binned)
     now = h.tree_hash(work)
+    # Windows moves the file, then writes its $I record: a kill in between leaves the data in the bin
+    # folder without a record (intact, but not listed in the Recycle Bin window). Documented, not lost.
+    orphans = h.recycle_bin_orphans()
     for rel in before:
-        assert (rel in now) != (rel in binned), f"{rel} lost or duplicated"
+        if rel not in now and rel not in binned:
+            assert before[rel] in orphans, f"{rel} lost: not on disk, not in the Recycle Bin"
+            print(f"{rel}: interrupted mid-move, data intact at {orphans[before[rel]]}")
+            continue
+        assert (rel in now) != (rel in binned), f"{rel} duplicated"
     for rel in binned:
         h.restore(os.path.join(work, rel))
+    for rel in set(before) - set(h.tree_hash(work)):  # put interrupted ones back by hand
+        os.replace(orphans[before[rel]], os.path.join(work, rel))
     assert h.tree_hash(work) == before

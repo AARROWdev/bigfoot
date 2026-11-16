@@ -377,3 +377,16 @@ def make_vhd(path, size_mb):
         f.seek(size)
         f.write(footer)
     return path
+
+def recycle_bin_orphans(drive="C:"):
+    """$R files with no $I record (a recycle interrupted mid-way): {sha1: $R path}."""
+    d = os.path.join(drive + os.sep, "$Recycle.Bin", my_sid())
+    if not os.path.isdir(d):
+        return {}
+    names = set(os.listdir(d))
+    out = {}
+    for n in names:
+        if n.startswith("$R") and "$I" + n[2:] not in names and os.path.isfile(os.path.join(d, n)):
+            with open(os.path.join(d, n), "rb") as f:
+                out[hashlib.sha1(f.read()).hexdigest()] = os.path.join(d, n)
+    return out
