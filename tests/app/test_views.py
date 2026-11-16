@@ -351,6 +351,26 @@ def test_clipboard_1000_paths_and_unicode(window, work):
     QTest.keyClick(window.tree, Qt.Key_C, Qt.ControlModifier)
     h.pump(20)
     assert sorted(QGuiApplication.clipboard().text().split("\n")) == sorted([root.files[0].path, root.files[1].path])
+    # another app sees the same text: paste it into Notepad (WM_PASTE, no keyboard needed)
+    import win32clipboard
+    win32clipboard.OpenClipboard()
+    try:
+        native = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+    finally:
+        win32clipboard.CloseClipboard()
+    assert sorted(native.splitlines()) == sorted([root.files[0].path, root.files[1].path])
+    from pywinauto import Application
+    n = subprocess.Popen(["notepad.exe"])
+    try:
+        notepad = Application(backend="win32").connect(process=n.pid, timeout=30).window(class_name="Notepad")
+        ed = notepad.child_window(class_name="Edit")
+        ed.wait("exists", 30)
+        ed.send_message(0x0302, 0, 0)  # WM_PASTE
+        h.pump(300)
+        pasted = ed.window_text().splitlines()
+        assert sorted(pasted) == sorted([root.files[0].path, root.files[1].path]), pasted
+    finally:
+        n.kill()
     # nothing selected: clipboard untouched
     QGuiApplication.clipboard().setText("keep me")
     window.tree.clearSelection()

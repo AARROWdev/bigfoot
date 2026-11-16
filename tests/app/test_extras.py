@@ -503,18 +503,18 @@ def test_selection_bigger_than_the_recycle_bin_together(window, work, dialogs, s
 @pytest.mark.parametrize("fs", ["ntfs", "fat32", "exfat"])
 def test_recycle_on_other_volumes(make_window, work, dialogs, fs):
     letter = {"ntfs": "N", "fat32": "F", "exfat": "E"}[fs]
-    vd = os.path.join(work, f"{fs}.vhdx")
-    script = os.path.join(work, "dp.txt")
-    with open(script, "w") as f:
-        f.write(f'create vdisk file="{vd}" maximum=1024 type=expandable\nselect vdisk file="{vd}"\nattach vdisk\n'
-                f"create partition primary\nformat fs={fs} quick label=BFT\nassign letter={letter}\n")
-    r = subprocess.run(["diskpart", "/s", script], capture_output=True, text=True)
-    if r.returncode:
-        pytest.skip(f"diskpart failed ({r.returncode}): {(r.stdout + r.stderr)[-300:]}")
+    vd = h.make_vhd(os.path.join(work, f"{fs}.vhd"), 256)
+    ps = (f"$d = Mount-DiskImage -ImagePath '{vd}' -PassThru | Get-Disk; Initialize-Disk -Number $d.Number "
+          f"-PartitionStyle MBR; New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter {letter} | "
+          f"Format-Volume -FileSystem {fs.upper()} -NewFileSystemLabel BFT -Confirm:$false")
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+    if r.returncode or not os.path.isdir(f"{letter}:\\"):
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Dismount-DiskImage -ImagePath '{vd}'"])
+        pytest.skip(f"couldn't make a {fs} drive here: {(r.stdout + r.stderr)[-300:]}")
     try:
         root = f"{letter}:\\"
         small = h.put(root + "small.bin", size=5000)
-        big = h.put(root + "big.bin", size=120 * 2**20)  # over 5% of the 1 GB volume
+        big = h.put(root + "big.bin", size=40 * 2**20)  # over 5% (and 10%) of the 256 MB drive
         w = make_window()
         assert w.drives.findData(root) >= 0, "the new drive isn't in the picker"
         h.scan(w, root)
@@ -525,9 +525,8 @@ def test_recycle_on_other_volumes(make_window, work, dialogs, fs):
                 assert os.path.exists(p) or h.in_bin(p), f"{fs}: {os.path.basename(p)} deleted for good " \
                                                          f"({w.status.text()})"
     finally:
-        with open(script, "w") as f:
-            f.write(f'select vdisk file="{vd}"\ndetach vdisk\n')
-        subprocess.run(["diskpart", "/s", script], capture_output=True)
+        subprocess.run(["powershell", "-NoProfile", "-Command", f"Dismount-DiskImage -ImagePath '{vd}'"],
+                       capture_output=True)
 
 
 # G13: the 5% fallback when a drive's Recycle Bin size was never set: Windows must not be stingier than Bigfoot

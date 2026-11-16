@@ -360,3 +360,20 @@ def restore(path):
 def empty_bin():
     subprocess.run(["powershell", "-NoProfile", "-Command", "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"],
                    capture_output=True)
+
+
+def make_vhd(path, size_mb):
+    """A fixed-size VHD file (raw disk + 512-byte footer) that Windows can mount without diskpart."""
+    import uuid
+    size = size_mb * 2**20
+    with open(path, "wb") as f:
+        f.truncate(size)  # real zeros on purpose: a small fixed disk image
+        cyl, heads, spt = size // 512 // (16 * 63), 16, 63
+        footer = bytearray(512)
+        struct.pack_into(">8sIIQI4sI4sQQHBBI", footer, 0, b"conectix", 2, 0x00010000, 0xFFFFFFFFFFFFFFFF, 0,
+                         b"bft ", 0x00010000, b"Wi2k", size, size, min(cyl, 65535), heads, spt, 2)
+        footer[68:84] = uuid.uuid4().bytes
+        struct.pack_into(">I", footer, 64, ~sum(footer) & 0xFFFFFFFF)
+        f.seek(size)
+        f.write(footer)
+    return path

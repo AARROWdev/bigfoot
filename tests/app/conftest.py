@@ -12,6 +12,12 @@ import zlib
 
 import pytest
 
+try:
+    import win32ui  # noqa: F401  (pywinauto imports it; it needs the MFC runtime, which Windows Sandbox lacks)
+except ImportError:
+    import types
+    sys.modules["win32ui"] = types.ModuleType("win32ui")  # pywinauto only uses it for screenshots
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(__file__))

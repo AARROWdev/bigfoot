@@ -4,7 +4,7 @@ Runs inside Windows Sandbox only (tests/sandbox/inside.ps1).
     blackbox.py wizard <setup.exe>        click through the setup wizard, ticking the desktop shortcut
     blackbox.py title <Bigfoot.exe> <t>   start it, check the window title, close it
     blackbox.py all <Bigfoot.exe>         settings remembered, two copies at once, bad %LOCALAPPDATA%,
-                                          copy a path and paste it into Notepad, no error.log, the mutex
+                                          no error.log, the mutex (copy + paste into Notepad: tests/app test 42)
     blackbox.py portable <Bigfoot.exe>    the unzipped portable copy starts and scans
 """
 import ctypes
@@ -141,6 +141,24 @@ def run_check(name, fn):
 
 
 # ------------------------------------------------------------------ modes
+def tick_desktop_task():
+    """Ticks "Create a desktop shortcut" through UI Automation (no mouse or keyboard needed). True if done."""
+    try:
+        w = Desktop(backend="uia").window(title_re="Setup - Bigfoot.*")
+        for it in w.descendants():
+            if "desktop" in it.window_text().lower():
+                try:
+                    if it.get_toggle_state() == 0:
+                        it.toggle()
+                    log("UIA toggle state now", it.get_toggle_state())
+                    return it.get_toggle_state() == 1
+                except Exception as e:  # noqa: BLE001
+                    log("no toggle on", it.element_info.control_type, e)
+    except Exception as e:  # noqa: BLE001
+        log("UIA tick failed", e)
+    return False
+
+
 def wizard(setup):
     proc = subprocess.Popen([setup, "/LOG=" + os.path.join(OUT, "wizard.log")])
     d = Desktop(backend="win32")
@@ -158,8 +176,9 @@ def wizard(setup):
             r = tasks[0].rectangle()
             # the list starts with a group heading; Home selects the first task (the desktop shortcut), Space
             # ticks it. Posted as window messages: SendInput depends on the host's keyboard focus.
-            tasks[0].set_focus()
-            tasks[0].send_keystrokes("{HOME}{SPACE}")
+            if not tick_desktop_task():
+                tasks[0].set_focus()
+                tasks[0].send_keystrokes("{HOME}{SPACE}")
             ticked = True
             log("ticked the desktop shortcut task", r)
             time.sleep(0.5)
@@ -259,29 +278,6 @@ def all_tests(exe):
                 check(f"BB starts when %LOCALAPPDATA% is {case}", False, "no window within 60 s")
                 subprocess.run(["taskkill", "/f", "/im", "Bigfoot.exe"], capture_output=True)
 
-    def paste_into_notepad():
-        root = make_tree(r"C:\bbtest\пример 日本 😀", 1, 2)
-        b = Bigfoot(exe)
-        b.scan(root)
-        tree = b.win.child_window(control_type="Tree", found_index=0)
-        first = tree.descendants(control_type="TreeItem")[0]
-        first.select()
-        first.set_focus()
-        time.sleep(0.3)
-        b.keys("^c")
-        time.sleep(0.5)
-        check("BB Ctrl+C status", b.status() == "Copied 1 path", b.status())
-        n = subprocess.Popen(["notepad.exe"])
-        nw = Application(backend="win32").connect(process=n.pid).window(class_name="Notepad")
-        nw.wait("ready", 30)
-        ed = nw.child_window(class_name="Edit")
-        ed.send_message(0x0302, 0, 0)  # WM_PASTE
-        time.sleep(0.5)
-        txt = ed.window_text()
-        check("BB path pasted into Notepad matches", txt == root, repr(txt))
-        n.kill()
-        b.close()
-
     def mutex():
         b = Bigfoot(exe)
         k32 = ctypes.windll.kernel32
@@ -293,7 +289,7 @@ def all_tests(exe):
         b.close()
 
     for name, fn in (("remembered", remembered), ("two copies", two_copies), ("bad LOCALAPPDATA", bad_localappdata),
-                     ("notepad", paste_into_notepad), ("mutex", mutex)):
+                     ("mutex", mutex)):
         log("---", name)
         run_check(f"BB {name}", fn)
     check("BB no error.log after normal use", not os.path.exists(lad) or os.path.getsize(lad) == 0,
