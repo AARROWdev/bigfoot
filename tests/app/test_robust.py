@@ -35,8 +35,8 @@ class Watchdog:
 
 # 29
 @pytest.mark.sandbox
-@pytest.mark.parametrize("seed", [1, 2, 3])
-def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch, seed):
+@pytest.mark.parametrize("seed,steps", [(1, 500), (2, 500), (3, 500), (4, 3000)])
+def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch, seed, steps):
     rnd = random.Random(seed)
     for i in range(25):
         h.make_tree(os.path.join(work, f"d{i}"), {f"s{j}": {f"f{k}.{rnd.choice(['mp4', 'txt', 'zip', 'bin'])}": rnd.randint(0, 9000)
@@ -60,7 +60,7 @@ def test_monkey_500_random_clicks_and_keys(window, work, no_launch, monkeypatch,
     keys = [Qt.Key_Tab, Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right, Qt.Key_Return, Qt.Key_F5, Qt.Key_Delete,
             Qt.Key_Space, Qt.Key_Backspace, Qt.Key_Escape, Qt.Key_Home, Qt.Key_End, Qt.Key_PageDown, Qt.Key_A]
     try:
-        for n in range(500):
+        for n in range(steps):
             answers.answer = "yes" if rnd.random() < 0.15 else "no"
             target = QApplication.widgetAt(window.mapToGlobal(QPoint(rnd.randrange(window.width()),
                                                                      rnd.randrange(window.height())))) or window

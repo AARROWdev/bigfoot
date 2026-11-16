@@ -452,9 +452,10 @@ def test_hard_links_streams_attributes_compressed_sparse(window, work):
 
 
 # 45
-@pytest.mark.parametrize("seed", range(100))
+@pytest.mark.parametrize("seed", range(300))
 def test_fuzz_random_trees(window, work, seed):
-    h.random_tree(work, seed)
+    shape = seed % 3  # 0: the default mix, 1: deep and narrow, 2: wide and shallow
+    h.random_tree(work, seed, max_depth=(5, 12, 2)[shape], max_entries=(8, 4, 40)[shape])
     root = h.scan(window, work)
     check_against_truth(root, work)
     for tab in (1, 2):

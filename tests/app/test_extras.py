@@ -138,7 +138,7 @@ def test_mapped_folder_recycle_is_not_permanent(make_window, dialogs):
 
 # G2: the model stays consistent through sorting, Files on/off, live refreshes, recycling and rescans
 @pytest.mark.sandbox
-@pytest.mark.parametrize("seed", range(5))
+@pytest.mark.parametrize("seed", range(15))
 def test_model_consistency_under_random_operations(window, work, dialogs, seed):
     warnings = []
     prev = qInstallMessageHandler(lambda mode, ctx, msg: warnings.append(msg))
@@ -147,7 +147,7 @@ def test_model_consistency_under_random_operations(window, work, dialogs, seed):
         rnd = random.Random(seed)
         h.random_tree(work, seed, max_depth=4, max_entries=10)
         h.scan(window, work)
-        for n in range(150):
+        for n in range(300):
             op = rnd.random()
             root = window.scanner.root
             if op < 0.2:
