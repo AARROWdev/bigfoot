@@ -768,8 +768,9 @@ class Window(QMainWindow):
         self.live = QTimer(self, interval=2000, timeout=self.live_refresh)
         self.sel_timer = QTimer(self, singleShot=True, interval=120, timeout=self.apply_selection)
 
-        for key, fn in ((QKeySequence.Delete, self.trash), (QKeySequence.Copy, self.copy_paths)):
-            QShortcut(key, self.tree, lambda fn=fn: fn(self.selected_items())).setContext(Qt.WidgetWithChildrenShortcut)
+        QShortcut(QKeySequence.Delete, self.tree, lambda: self.trash(self.selected_items())).setContext(
+            Qt.WidgetWithChildrenShortcut)
+        self.tree.installEventFilter(self)  # Ctrl+C: see eventFilter
         QShortcut(QKeySequence("F5"), self, self.scan)
         QShortcut(QKeySequence("Ctrl+L"), self, lambda: (self.path.setFocus(), self.path.selectAll()))
         QShortcut(QKeySequence("Backspace"), self.map, self.map_up).setContext(Qt.WidgetShortcut)
@@ -810,6 +811,9 @@ class Window(QMainWindow):
                 e.type() == QEvent.KeyPress and e.key() in (
                 Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Home, Qt.Key_End)
                 and not (e.key() == Qt.Key_Down and e.modifiers() & Qt.AltModifier))):  # Alt+Down opens the list
+            return True
+        if obj is getattr(self, "tree", None) and e.type() == QEvent.KeyPress and e.matches(QKeySequence.Copy):
+            self.copy_paths(self.selected_items())  # full paths; never Qt's own copy of just the current row's name
             return True
         if obj is getattr(self, "crumb", None) and e.type() == QEvent.Resize:
             self.update_crumb()
