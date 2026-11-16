@@ -104,9 +104,12 @@ def test_whole_c_drive_and_memory_released(window, record_property):
     import psutil
     proc = psutil.Process()
     m0 = proc.memory_info().rss
+    dog = Watchdog()  # and the window stays responsive while it scans a whole drive
     t0 = time.time()
     root = h.scan(window, "C:\\", timeout=3600)
     secs = time.time() - t0
+    dog.t.stop()
+    assert dog.worst < 2.0, f"the window froze for {dog.worst:.1f}s during the whole-drive scan"
     m1 = proc.memory_info().rss
     assert root.nfiles > 10_000 and window.status.text().startswith("Scanned C:\\")
     for tab in (1, 2, 0):

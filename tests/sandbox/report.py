@@ -55,6 +55,22 @@ PLAN = {  # plan test number -> (what, how to find its results)
     43: ("Killing Bigfoot mid-recycle loses nothing", ["test_killing_bigfoot"]),
     44: ("Locales and time zones", ["test_locale_and_time_zone"]),
     45: ("Fuzz: 100 random trees vs ground truth", ["test_fuzz_random_trees"]),
+    "G1": ("Never deleted for good: too big, size-limit edges, recycling off, subst, share, mapped folder",
+           ["test_file_too_big", "test_recycle_bin_size_limit_edges", "test_windows_set_to_delete",
+            "test_subst_drive_recycle", "test_network_share_recycle", "test_mapped_folder_recycle"]),
+    "G2": ("Model consistency under 150 random operations x5 seeds", ["test_model_consistency"]),
+    "G3": ("Scan / Stop / F5 hammered", ["test_rapid_scan_stop_rescan"]),
+    "G4": ("Recycle the map's focus and its parent", ["test_recycle_the_map_focus"]),
+    "G5": ("Path box accepts anything", ["test_path_box_accepts_anything"]),
+    "G6": ("Delete during a scan refused; Top 100 recycle with Files off", ["test_delete_during_scan"]),
+    "G7": ("20 rescans don't leak memory", ["test_rescans_do_not_leak"]),
+    "G8": ("Strange timestamps (1601-30000)", ["test_strange_timestamps"]),
+    "G9": ("Treemap extremes", ["test_treemap_extremes"]),
+    "G10": ("Recycle long paths, read-only/hidden/system/unicode, folders holding links",
+            ["test_recycle_long_path", "test_recycle_read_only", "test_recycling_a_folder_never"]),
+    "G11": ("Selection bigger than the Recycle Bin together", ["test_selection_bigger_than"]),
+    "G12": ("Recycle on fresh NTFS / FAT32 / exFAT drives", ["test_recycle_on_other_volumes"]),
+    "G13": ("Default Recycle Bin size fallback is safe", ["test_default_recycle_bin_size"]),
 }
 
 

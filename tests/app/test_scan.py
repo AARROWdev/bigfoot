@@ -409,9 +409,15 @@ def test_200k_files_in_one_folder_and_a_million_total(window, work, record_prope
                 open(os.path.join(d, f"{c}.txt"), "wb").close()
     proc = psutil.Process()
     m0 = proc.memory_info().rss
+    beats = []  # the window must stay responsive while it scans and refreshes a million files
+    from PySide6.QtCore import QTimer
+    dog = QTimer(interval=50, timeout=lambda: beats.append(time.time()))
+    dog.start()
     t0 = time.time()
     root = h.scan(window, work, timeout=1800)
     secs = time.time() - t0
+    dog.stop()
+    worst = max((b - a for a, b in zip(beats, beats[1:])), default=0)
     m1 = proc.memory_info().rss
     assert root.nfiles == 1_000_000 and root.ndirs == 1 + 1 + 80 + 8000
     for tab in (1, 2, 0):
@@ -420,6 +426,8 @@ def test_200k_files_in_one_folder_and_a_million_total(window, work, record_prope
     assert window.top.rowCount() == 100
     record_property("million_files_scan_seconds", round(secs, 1))
     record_property("million_files_rss_mb", round((m1 - m0) / 2**20))
+    record_property("million_files_worst_freeze_s", round(worst, 2))
+    assert worst < 2.0, f"the window froze for {worst:.1f}s during the scan"
     print(f"\n1M files: {secs:.1f}s, +{(m1 - m0) / 2**20:.0f} MB")
 
 

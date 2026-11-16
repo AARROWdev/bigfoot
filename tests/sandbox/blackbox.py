@@ -80,13 +80,10 @@ class Bigfoot:
         time.sleep(0.3)
 
     def keys(self, k):
-        """Real key presses when this Sandbox has the keyboard; otherwise post them to the window (the host's
-        focus decides whether SendInput reaches a Sandbox, so tests must not depend on it)."""
+        """Key presses posted to the window as messages (with the modifier state set), not SendInput: whether
+        SendInput reaches a Sandbox depends on which window has the keyboard on the host."""
         self.focus()
-        try:
-            keyboard.send_keys(k, with_spaces=True)
-        except RuntimeError:  # "SendInput() inserted only 0 ..."
-            Application(backend="win32").connect(handle=self.hwnd).window(handle=self.hwnd).send_keystrokes(k)
+        Application(backend="win32").connect(handle=self.hwnd).window(handle=self.hwnd).send_keystrokes(k)
 
     def texts(self):
         return [c.window_text() for c in self.win.descendants(control_type="Text")]
@@ -101,7 +98,8 @@ class Bigfoot:
         edit = self.win.child_window(control_type="Edit", found_index=0)
         edit.set_edit_text(path)  # through UI Automation: works for any text and without keyboard focus
         self.win.child_window(title="Scan", control_type="Button").invoke()
-        return wait(lambda: self.status().startswith(("Scanned", "Stopped")) and self.status(), timeout, f"scan {path}")
+        return wait(lambda: self.status().startswith((f"Scanned {path}", f"Stopped {path}")) and self.status(),
+                    timeout, f"scan {path}")
 
     def path_text(self):
         return self.win.child_window(control_type="Edit", found_index=0).get_value()
@@ -158,7 +156,10 @@ def wizard(setup):
         tasks = [c for c in shown if "CheckListBox" in c.class_name()]
         if tasks and not ticked:  # "Select Additional Tasks": tick "Create a desktop shortcut" (the only task)
             r = tasks[0].rectangle()
-            tasks[0].click(coords=(12, 12))  # the first item's check box (window messages, not SendInput)
+            # the list starts with a group heading; Home selects the first task (the desktop shortcut), Space
+            # ticks it. Posted as window messages: SendInput depends on the host's keyboard focus.
+            tasks[0].set_focus()
+            tasks[0].send_keystrokes("{HOME}{SPACE}")
             ticked = True
             log("ticked the desktop shortcut task", r)
             time.sleep(0.5)

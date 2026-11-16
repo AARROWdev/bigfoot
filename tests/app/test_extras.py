@@ -495,3 +495,60 @@ def test_selection_bigger_than_the_recycle_bin_together(window, work, dialogs, s
     h.pump(2000)
     lost = [p for p in paths if gone_for_good(p) and not (shape == "folder" and h.in_bin(os.path.dirname(p)))]
     assert not lost, f"gone for good: {lost}  (status: {window.status.text()})"
+
+
+# G12: other volumes: a fresh NTFS / FAT32 / exFAT drive (a virtual disk) has no Recycle Bin settings yet, so
+# Bigfoot falls back to Windows' default size. Whatever Windows does there, nothing may be lost for good.
+@pytest.mark.sandbox
+@pytest.mark.parametrize("fs", ["ntfs", "fat32", "exfat"])
+def test_recycle_on_other_volumes(make_window, work, dialogs, fs):
+    letter = {"ntfs": "N", "fat32": "F", "exfat": "E"}[fs]
+    vd = os.path.join(work, f"{fs}.vhdx")
+    script = os.path.join(work, "dp.txt")
+    with open(script, "w") as f:
+        f.write(f'create vdisk file="{vd}" maximum=1024 type=expandable\nselect vdisk file="{vd}"\nattach vdisk\n'
+                f"create partition primary\nformat fs={fs} quick label=BFT\nassign letter={letter}\n")
+    r = subprocess.run(["diskpart", "/s", script], capture_output=True, text=True)
+    if r.returncode:
+        pytest.skip(f"diskpart failed ({r.returncode}): {(r.stdout + r.stderr)[-300:]}")
+    try:
+        root = f"{letter}:\\"
+        small = h.put(root + "small.bin", size=5000)
+        big = h.put(root + "big.bin", size=120 * 2**20)  # over 5% of the 1 GB volume
+        w = make_window()
+        assert w.drives.findData(root) >= 0, "the new drive isn't in the picker"
+        h.scan(w, root)
+        for p in (small, big):
+            if os.path.exists(p):
+                h.scan(w, root)
+                recycle_one(w, p, dialogs)
+                assert os.path.exists(p) or h.in_bin(p), f"{fs}: {os.path.basename(p)} deleted for good " \
+                                                         f"({w.status.text()})"
+    finally:
+        with open(script, "w") as f:
+            f.write(f'select vdisk file="{vd}"\ndetach vdisk\n')
+        subprocess.run(["diskpart", "/s", script], capture_output=True)
+
+
+# G13: the 5% fallback when a drive's Recycle Bin size was never set: Windows must not be stingier than Bigfoot
+@pytest.mark.sandbox
+def test_default_recycle_bin_size_fallback_is_safe(window, work, dialogs):
+    import ctypes as c
+    import winreg
+    h.empty_bin()
+    guid = c.create_unicode_buffer(64)
+    c.windll.kernel32.GetVolumeNameForVolumeMountPointW("C:\\", guid, 64)
+    key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume" + "\\" + guid.value[10:-1]
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
+        old = winreg.QueryValueEx(k, "MaxCapacity")[0]
+        winreg.DeleteValue(k, "MaxCapacity")
+    try:
+        total = bf.QStorageInfo("C:\\").bytesTotal()
+        p = os.path.join(work, "just_under_5pct.img")
+        h.sparse(p, total // 20 - 2**20)
+        h.scan(window, work)
+        recycle_one(window, p, dialogs)
+        assert os.path.exists(p) or h.in_bin(p), f"deleted for good under the fallback size ({window.status.text()})"
+    finally:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
+            winreg.SetValueEx(k, "MaxCapacity", 0, winreg.REG_DWORD, old)
