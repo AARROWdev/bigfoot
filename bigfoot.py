@@ -1319,13 +1319,16 @@ def apply_theme(app):
 
 
 def install_error_log():
-    d = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), APP)
-    os.makedirs(d, exist_ok=True)
+    d = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), APP)
     log = os.path.join(d, "error.log")
 
     def hook(t, v, tb):
-        with open(log, "a", encoding="utf-8") as f:
-            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "".join(traceback.format_exception(t, v, tb)) + "\n")
+        try:  # the folder is made on the first error; if it can't be, the error just isn't logged
+            os.makedirs(d, exist_ok=True)
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "".join(traceback.format_exception(t, v, tb)) + "\n")
+        except OSError:
+            pass
         sys.__excepthook__(t, v, tb)
     sys.excepthook = hook
 
