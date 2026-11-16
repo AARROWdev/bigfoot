@@ -821,6 +821,8 @@ class Window(QMainWindow):
                 continue
             v = QStorageInfo(root)
             if not v.isValid() or not v.isReady():
+                if os.path.isdir(root):  # a subst drive: Qt has no sizes for it, but it can be scanned
+                    self.drives.addItem(root, root)
                 continue
             used = v.bytesTotal() - v.bytesAvailable()
             name = v.displayName() if v.displayName() != v.rootPath() else ""
