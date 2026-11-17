@@ -1220,22 +1220,27 @@ class Window(QMainWindow):
         if self.scanner and not self.scanner.t1:
             self.status.setText("Wait for the scan to finish before deleting.")
             return
-        bad = [(i, "Windows would act on a different file or device") for i in items if not self._safe_path(i.path)]
-        batch = {}  # what the selection adds to each drive's Recycle Bin
-        bad += [(i, why) for i in items
-                if self._safe_path(i.path) and (why := recycle_refusal(i.path, i.size, batch))]
+        bad, batch = [], {}  # batch: what the selection adds to each drive's Recycle Bin
+        for i in items:
+            if not self._safe_path(i.path):
+                bad.append((i, "Windows would act on a different file or device"))
+            elif self._has_skipped(i):  # its real size is unknown, so the Recycle Bin size check can't be made
+                bad.append((i, "its size isn't known because the scan was stopped; rescan it first"))
+            elif why := recycle_refusal(i.path, i.size, batch):
+                bad.append((i, why))
         if bad:
-            items = [i for i in items if all(i is not b for b, _ in bad)]
-            self.status.setText(f"Can't recycle {bad[0][0].name!r}: {bad[0][1]}. Use Explorer for this one.")
+            refused = {id(b) for b, _ in bad}
+            items = [i for i in items if id(i) not in refused]
+            many = f"{len(bad)} items (first {bad[0][0].name!r})" if len(bad) > 1 else repr(bad[0][0].name)
+            self.status.setText(f"Can't recycle {many}: {bad[0][1]}. Use Explorer for these.")
             if not items:
                 return
         total = sum(i.size for i in items)
         names = "\n".join(i.path for i in items[:8]) + ("\n…" if len(items) > 8 else "")
-        unknown = any(self._has_skipped(i) for i in items)
+        skipped = f"\n\n{len(bad)} other item{'s' if len(bad) > 1 else ''} can't be recycled: see the status bar."
         if QMessageBox.question(self, "Send to Recycle Bin",
-                                f"Send {len(items)} item{'s' if len(items) > 1 else ''} ({human(total)}"
-                                f"{' or more: part of it was not scanned' if unknown else ''}) "
-                                f"to the Recycle Bin?\n\n{names}") != QMessageBox.Yes:
+                                f"Send {len(items)} item{'s' if len(items) > 1 else ''} ({human(total)}) "
+                                f"to the Recycle Bin?\n\n{names}{skipped if bad else ''}") != QMessageBox.Yes:
             return
         failed = []
         for it in items:
@@ -1261,7 +1266,7 @@ class Window(QMainWindow):
         self.set_focus(self.focus)
         self.status.setText(f"Sent {len(items) - len(failed)} to the Recycle Bin" +
                             (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else "") +
-                            (f"  ·  skipped {bad[0][0].name!r} (use Explorer)" if bad else ""))
+                            (f"  ·  skipped {len(bad)} (first {bad[0][0].name!r}; use Explorer)" if bad else ""))
 
     DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"{p}{n}" for p in ("COM", "LPT") for n in "123456789¹²³")}
 
