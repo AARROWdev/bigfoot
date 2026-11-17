@@ -663,3 +663,23 @@ def test_drive_list_never_probes_empty_removable_or_optical_drives(window, monke
     window.fill_drives()
     assert not [p for p in probed if p.upper() in fake], probed
     assert window.drives.findData("R:\\") == -1 and window.drives.findData("U:\\") == -1
+
+# G15 (Q3, decided 2026-11-16: match Explorer). Older Recycle Bin contents don't count against a new
+# Delete: if the new item fits the bin on its own, Bigfoot recycles it, and Windows may empty the oldest items
+# already in the bin to make room, exactly as Explorer does. Only items of the SAME Delete are protected (G11).
+@pytest.mark.sandbox
+def test_older_bin_contents_do_not_block_a_new_delete(window, work, dialogs):
+    h.empty_bin()
+    cap = _bin_cap()
+    old = os.path.join(work, "old.img")
+    new = os.path.join(work, "new.img")
+    h.sparse(old, int(cap * 0.6))
+    h.sparse(new, int(cap * 0.6))
+    h.scan(window, work)
+    recycle_one(window, old, dialogs)  # first Delete: fits, recycled
+    assert h.in_bin(old)
+    h.scan(window, work)
+    n = len(dialogs.texts)
+    recycle_one(window, new, dialogs)  # second Delete: fits on its own, so it is not refused
+    assert len(dialogs.texts) == n + 1 and window.status.text() == "Sent 1 to the Recycle Bin", window.status.text()
+    assert h.in_bin(new) and not os.path.exists(new)

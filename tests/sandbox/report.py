@@ -74,6 +74,8 @@ PLAN = {  # plan test number -> (what, how to find its results)
     "G14": ("Round 2: removable drive, size policy, MaxCapacity 0, 5,000 refused, no drive probing",
             ["test_removable_drive", "test_recycle_bin_size_policy", "test_max_capacity_zero",
              "test_large_all_refused", "test_drive_list_never_probes"]),
+    "G15": ("Q3: older Recycle Bin contents don't block a new Delete (like Explorer)",
+            ["test_older_bin_contents"]),
 }
 
 
