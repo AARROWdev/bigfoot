@@ -1,33 +1,43 @@
+<p align="center">
+  <a href="https://github.com/AARROWdev/bigfoot/releases/latest">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
+      <img alt="Bigfoot. Find what's eating your disk. A fast disk space analyzer for Windows: 1,000,000 files scanned in 16 seconds, 429 automated tests in a throwaway Windows Sandbox, and it never deletes a file for good while saying it was recycled." src="docs/hero-dark.svg" width="100%">
+    </picture>
+  </a>
+</p>
+
 # Bigfoot
 
-**Find what's eating your disk.** A fast disk space analyzer for Windows.
+**Download: [latest release](https://github.com/AARROWdev/bigfoot/releases/latest)** (Windows 10/11, 64-bit)
+
+Point it at a drive or folder and it shows where the space went: a biggest-first tree, a treemap, a breakdown by file type and the 100 biggest files. Select what you don't need and send it to the Recycle Bin; the totals update on the spot.
 
 ![Bigfoot treemap](docs/map.png)
-
-## Download
-Windows 10/11, 64-bit. From the [latest release](https://github.com/AARROWdev/bigfoot/releases/latest):
-- **BigfootSetup-<version>.exe** (recommended): installs to Program Files with a Start Menu entry. Run it again to upgrade; it closes Bigfoot if it's open.
-- **Bigfoot-<version>-portable-win64.zip**: unzip anywhere and run `Bigfoot.exe`. Nothing is installed.
-
-The app isn't code-signed yet, so Windows may show "Windows protected your PC": click **More info**, then **Run anyway**.
-
-## Uninstall
-Settings > Apps > Bigfoot > Uninstall (portable: delete the folder). Your settings stay in the registry (`HKCU\Software\Bigfoot`); delete that key to remove them too.
-
-## What it does
-- **Fast scan** of any drive or folder (multi-threaded, live progress, tree fills in as it scans)
-- **Biggest-first tree:** size, % of drive bar, files, folders, newest modified date. Click any column to sort.
-- **Map:** treemap of the selected folder, colored by file type. Click to find it in the tree, double-click a folder to zoom in, right-click or Up to zoom out.
-- **Types:** space by extension and category (video, audio, images, archives, disk images, programs, documents, code)
-- **Top 100 files:** the biggest files under the selected folder
-- **Actions:** open, show in Explorer, copy path, scan only this folder, send to Recycle Bin (totals update on the spot)
-- Drive picker with used/free bar
 
 | Types | Top 100 files |
 |---|---|
 | ![Types](docs/types.png) | ![Top 100 files](docs/top.png) |
 
-## Keys
+## Download
+From the [latest release](https://github.com/AARROWdev/bigfoot/releases/latest):
+- **BigfootSetup-&lt;version&gt;.exe** (recommended): installs to Program Files with a Start Menu entry. Run it again to upgrade; it closes Bigfoot if it's open.
+- **Bigfoot-&lt;version&gt;-portable-win64.zip**: unzip anywhere and run `Bigfoot.exe`. Nothing is installed.
+
+The app isn't code-signed yet, so Windows may show "Windows protected your PC": click **More info**, then **Run anyway**.
+
+**Uninstall:** Settings > Apps > Bigfoot > Uninstall (portable: delete the folder). Your settings stay in the registry (`HKCU\Software\Bigfoot`); delete that key to remove them too.
+
+## What it does
+- **Fast scan** of any drive, folder or network share: multi-threaded, live progress, and the tree fills in while it scans
+- **Biggest-first tree:** size, % of drive bar, files, folders, newest modified date. Click any column to sort.
+- **Map:** a squarified treemap of the selected folder, colored by file type. Click to find it in the tree, double-click a folder to zoom in, right-click or Up to zoom out.
+- **Types:** space by extension and category (video, audio, images, archives, disk images, programs, documents, code)
+- **Top 100 files** under the selected folder
+- **Actions:** open, show in Explorer, copy path, scan only this folder, send to Recycle Bin
+- Drive picker with a used/free bar
+
 | Key | Action |
 |---|---|
 | F5 | Rescan |
@@ -38,18 +48,38 @@ Settings > Apps > Bigfoot > Uninstall (portable: delete the folder). Your settin
 
 Folders Windows won't let you read are counted as "access denied" in the status bar; run as administrator to include them.
 
+## The part worth reading: delete means recycle
+A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTrash` (like the shell call underneath it) will quietly delete a file permanently and still report success when the Recycle Bin can't take it. Bigfoot checks before it sends anything, and refuses with a reason instead:
+
+- **No Recycle Bin on that drive:** USB sticks, SD cards, CD/DVD, RAM disks, anything that isn't a fixed drive
+- **Recycling turned off** for that drive (`NukeOnDelete`)
+- **Too big for the bin:** each item is checked against the drive's bin size (`MaxCapacity`, the Windows 5% default, and the `RecycleBinSize` Group Policy, the smallest one wins). A selection too big for the bin *together* is refused too, because Windows would otherwise purge the items it recycled seconds earlier.
+- **Size not known:** a folder only partly scanned because you pressed Stop
+- **Names Windows can't recycle:** trailing dots or spaces, unpaired surrogates, device names like `CON`, `NUL.txt`, `COM1`
+
+## Tested in a throwaway Windows
+`tests/` holds 429 automated tests that run inside a fresh Windows Sandbox, so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
+
+Release bar: every test passes **3 full runs in a row**. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
+
+| Measured in the Sandbox | |
+|---|---|
+| 1,000,000 files | about 16 s, +60 MB |
+| The whole C: drive | about 15 s |
+| Worst window freeze during a big scan | under 0.5 s |
+
 ## Build
 ```
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt pyinstaller
 winget install JRSoftware.InnoSetup   # installer compiler
-.\build.ps1   # -> build\dist\Bigfoot\Bigfoot.exe, dist\BigfootSetup-<ver>.exe, dist\Bigfoot-<ver>-portable-win64.zip
+.\build.ps1   # -> dist\BigfootSetup-<ver>.exe, dist\Bigfoot-<ver>-portable-win64.zip
 ```
-`Bigfoot.bat` runs it from source. `tests\sandbox\run-sandbox.ps1` tests the installer (install, upgrade while running, uninstall) in a throwaway Windows Sandbox.
+`Bigfoot.bat` runs it from source. `tests\sandbox\run-tests.ps1` runs the full suite in a fresh Windows Sandbox.
 Settings live in the registry (`HKCU\Software\Bigfoot`); `error.log` is in `%LOCALAPPDATA%\Bigfoot\`.
 
 ## How it was built
-Built with [Claude Code](https://claude.com/claude-code). Every change was reviewed by a separate AI reviewer session against a written spec (what must work, what counts as a bug), looped until zero findings, and the installer is tested end to end (install, upgrade while running, uninstall) in a throwaway Windows Sandbox.
+Python and PySide6 (Qt 6), one 1,400-line file. Built with [Claude Code](https://claude.com/claude-code): a written spec of what must work and what counts as a bug, a separate AI reviewer session checking every change against it until zero findings, and the Sandbox suite above as the release gate.
 
 ## License
 [MIT](LICENSE)
@@ -58,4 +88,3 @@ Built with [Claude Code](https://claude.com/claude-code). Every change was revie
 - NTFS master file table reader (whole-drive scans in seconds, needs admin)
 - Hard-link de-duplication (WinSxS), allocated size on disk
 - Mac version
-- Clutter cleaner: scan → report → approve → quarantine

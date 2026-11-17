@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="320" viewBox="0 0 960 320" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<rect width="960" height="320" rx="16" fill="#ffffff"/>
+<rect x="680" y="40" width="140" height="96" rx="4" fill="#e8a33d" opacity="0.85"/><rect x="824" y="40" width="96" height="58" rx="4" fill="#4f8fd6" opacity="0.85"/><rect x="824" y="102" width="96" height="34" rx="4" fill="#59b36b" opacity="0.85"/><rect x="680" y="140" width="70" height="40" rx="4" fill="#c45c8a" opacity="0.85"/><rect x="754" y="140" width="166" height="40" rx="4" fill="#8a6fd1" opacity="0.85"/>
+<text x="40" y="96" font-size="56" font-weight="800" fill="#101418">Bigfoot</text>
+<text x="40" y="136" font-size="22" fill="#56606c">Find what's eating your disk.</text><text x="40" y="166" font-size="18" fill="#56606c">A fast disk space analyzer for Windows.</text>
+<rect x="40" y="200" width="280" height="96" rx="12" fill="#f5f7fa" stroke="#dde3ea"/>
+<text x="60" y="240" font-size="26" font-weight="700" fill="#b7791f">1,000,000 files</text>
+<text x="60" y="272" font-size="16" fill="#56606c">scanned in 16 s</text><rect x="340" y="200" width="280" height="96" rx="12" fill="#f5f7fa" stroke="#dde3ea"/>
+<text x="360" y="240" font-size="26" font-weight="700" fill="#b7791f">429 tests</text>
+<text x="360" y="272" font-size="16" fill="#56606c">in a throwaway Windows Sandbox</text><rect x="640" y="200" width="280" height="96" rx="12" fill="#f5f7fa" stroke="#dde3ea"/>
+<text x="660" y="240" font-size="26" font-weight="700" fill="#b7791f">0 silent deletes</text>
+<text x="660" y="272" font-size="16" fill="#56606c">the Recycle Bin or nothing</text>
+</svg>
