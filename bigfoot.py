@@ -844,7 +844,9 @@ class Window(QMainWindow):
                 continue
             v = QStorageInfo(root)
             if not v.isValid() or not v.isReady():
-                if os.path.isdir(root):  # a subst drive: Qt has no sizes for it, but it can be scanned
+                # a subst drive (it reports as fixed): Qt has no sizes for it, but it scans. Only fixed drives
+                # are probed: an empty card reader or DVD drive could pop up "There is no disk in the drive".
+                if kind == 3 and os.path.isdir(root):
                     self.drives.addItem(root, root)
                 continue
             used = v.bytesTotal() - v.bytesAvailable()
@@ -1268,7 +1270,8 @@ class Window(QMainWindow):
                             (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else "") +
                             (f"  ·  skipped {len(bad)} (first {bad[0][0].name!r}; use Explorer)" if bad else ""))
 
-    DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"{p}{n}" for p in ("COM", "LPT") for n in "123456789¹²³")}
+    DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+               *(f"{p}{n}" for p in ("COM", "LPT") for n in "0123456789¹²³")}
 
     @classmethod
     def _safe_path(cls, path):
