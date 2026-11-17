@@ -152,22 +152,25 @@ def test_deselected_rows_and_cancel(tree, dialogs):
 
 
 # 26
+NAMES = ("trail.", "trail ", "a\ud800lone.bin", "CON", "nul.txt", "CONOUT$", "conin$.txt", "COM0", "LPT0.log")
+
+
 def test_refused_names_and_unscanned_folders(window, work, dialogs, monkeypatch):
     h.empty_bin()
-    for n in ("trail.", "trail ", "a\ud800lone.bin", "CON", "nul.txt"):
+    for n in NAMES:
         h.put(os.path.join(work, n), size=10)
     h.put(os.path.join(work, "trail"), size=99)  # the sibling Windows would act on instead
     h.put(os.path.join(work, "dotdir.", "inside.bin"), size=5)
     before = h.tree_hash(work)
     root = h.scan(window, work)
-    for n in ("trail.", "trail ", "a\ud800lone.bin", "CON", "nul.txt", "dotdir.\\inside.bin"):
+    for n in NAMES + ("dotdir.\\inside.bin",):
         it = h.find_dir(root, os.path.join(work, n))
         h.select_items(window, [it])
         press_delete(window)
         assert "Can't recycle" in window.status.text() or "Can't" in window.status.text(), (n, window.status.text())
         assert h.tree_hash(work) == before, f"recycling {n!r} touched the disk"
     assert not h.recycle_bin_entries()
-    # folders left unscanned by Stop: the dialog says the size is unknown
+    # folders left part-scanned by Stop: refused (their real size is unknown, so the bin-size check can't be made)
     for i in range(30):
         h.make_tree(os.path.join(work, "big", f"d{i}"), {f"s{j}": {"f.bin": 10} for j in range(4)})
     real = bf.Scanner._scan
@@ -183,10 +186,13 @@ def test_refused_names_and_unscanned_folders(window, work, dialogs, monkeypatch)
     h.wait_until(lambda: h.scan_finished(window), 60)
     big = h.find_dir(window.scanner.root, os.path.join(work, "big"))
     assert window._has_skipped(big)
-    dialogs.answer = "no"
+    n = len(dialogs.texts)
+    before = h.tree_hash(work)
     h.select_items(window, [big])
     press_delete(window)
-    assert "part of it was not scanned" in dialogs.texts[-1]
+    assert len(dialogs.texts) == n, "a part-scanned folder must be refused before the confirm dialog"
+    assert "rescan it first" in window.status.text(), window.status.text()
+    assert h.tree_hash(work) == before and not h.recycle_bin_entries()
 
 
 # 27

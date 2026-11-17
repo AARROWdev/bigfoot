@@ -71,6 +71,9 @@ PLAN = {  # plan test number -> (what, how to find its results)
     "G11": ("Selection bigger than the Recycle Bin together", ["test_selection_bigger_than"]),
     "G12": ("Recycle on fresh NTFS / FAT32 / exFAT drives", ["test_recycle_on_other_volumes"]),
     "G13": ("Default Recycle Bin size fallback is safe", ["test_default_recycle_bin_size"]),
+    "G14": ("Round 2: removable drive, size policy, MaxCapacity 0, 5,000 refused, no drive probing",
+            ["test_removable_drive", "test_recycle_bin_size_policy", "test_max_capacity_zero",
+             "test_large_all_refused", "test_drive_list_never_probes"]),
 }
 
 

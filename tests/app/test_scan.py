@@ -134,10 +134,11 @@ def test_odd_names_are_scanned_as_themselves(window, work):
 
 
 def test_reserved_device_names_are_scanned(window, work):
-    for n in ("CON", "nul", "aux.txt", "COM1", "lpt9.log"):
+    names = ("CON", "nul", "aux.txt", "COM1", "lpt9.log", "CONOUT$", "conin$.txt", "COM0", "LPT0")
+    for n in names:
         h.put(os.path.join(work, n), size=321)
     root = h.scan(window, work)
-    assert root.nfiles == 5 and root.size == 5 * 321
+    assert root.nfiles == len(names) and root.size == len(names) * 321
 
 
 # 11

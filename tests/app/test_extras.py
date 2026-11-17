@@ -498,6 +498,8 @@ def test_selection_bigger_than_the_recycle_bin_together(window, work, dialogs, s
     h.pump(2000)
     lost = [p for p in paths if gone_for_good(p) and not (shape == "folder" and h.in_bin(os.path.dirname(p)))]
     assert not lost, f"gone for good: {lost}  (status: {window.status.text()})"
+    if shape == "files":  # the first fits, the other two are refused, and the status counts both (F53)
+        assert "skipped 2 (first" in window.status.text(), window.status.text()
 
 
 # G12: other volumes: a fresh NTFS / FAT32 / exFAT drive (a virtual disk) has no Recycle Bin settings yet, so
@@ -554,3 +556,110 @@ def test_default_recycle_bin_size_fallback_is_safe(window, work, dialogs):
     finally:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
             winreg.SetValueEx(k, "MaxCapacity", 0, winreg.REG_DWORD, old)
+
+# G14: round-2 review findings. Removable drives, Group Policy size, MaxCapacity 0, a big all-refused selection,
+# and drive probing (F48, F50, F51, F52, F55). Windows settings are changed in the Sandbox only, and put back.
+def _set_policy(name, value):
+    import winreg
+    key = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
+        if value is None:
+            try:
+                winreg.DeleteValue(k, name)
+            except OSError:
+                pass
+        else:
+            winreg.SetValueEx(k, name, 0, winreg.REG_DWORD, value)
+
+
+def _bin_key(drive="C:\\"):
+    import ctypes as c
+    guid = c.create_unicode_buffer(64)
+    c.windll.kernel32.GetVolumeNameForVolumeMountPointW(drive, guid, 64)
+    return r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume" + "\\" + guid.value[10:-1]
+
+
+@pytest.mark.sandbox
+def test_removable_drive_is_refused(window, work, dialogs, monkeypatch):
+    """F48: USB sticks and memory cards have no Recycle Bin (simulated: C: reported as DRIVE_REMOVABLE)."""
+    h.empty_bin()
+    p = h.put(os.path.join(work, "on_usb.bin"), size=100)
+    h.scan(window, work)
+    k32 = bf.ctypes.windll.kernel32
+    real = k32.GetDriveTypeW
+    monkeypatch.setattr(k32, "GetDriveTypeW", lambda root: 2 if str(root).upper().startswith("C:") else real(root))
+    n = len(dialogs.texts)
+    recycle_one(window, p, dialogs)
+    assert os.path.exists(p) and not h.in_bin(p)
+    assert "removable drive" in window.status.text() and len(dialogs.texts) == n
+
+
+@pytest.mark.sandbox
+def test_recycle_bin_size_policy_is_honoured(window, work, dialogs):
+    """F50: a 1% "Maximum allowed Recycle Bin size" policy overrides the bigger user setting."""
+    h.empty_bin()
+    total = bf.QStorageInfo("C:\\").bytesTotal()
+    p = os.path.join(work, "two_percent.img")
+    h.sparse(p, total // 50)  # 2% of the drive: under the user's limit, over the policy's
+    _set_policy("RecycleBinSize", 1)
+    try:
+        h.scan(window, work)
+        recycle_one(window, p, dialogs)
+        assert os.path.exists(p) and "bigger than" in window.status.text(), window.status.text()
+    finally:
+        _set_policy("RecycleBinSize", None)
+
+
+@pytest.mark.sandbox
+def test_max_capacity_zero_is_respected(window, work, dialogs):
+    """F52: MaxCapacity = 0 is a setting (nothing fits), not "never set"."""
+    import winreg
+    h.empty_bin()
+    key = _bin_key()
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
+        old = winreg.QueryValueEx(k, "MaxCapacity")[0]
+        winreg.SetValueEx(k, "MaxCapacity", 0, winreg.REG_DWORD, 0)
+    try:
+        p = h.put(os.path.join(work, "small.bin"), size=1000)
+        h.scan(window, work)
+        recycle_one(window, p, dialogs)
+        assert os.path.exists(p) and "bigger than" in window.status.text(), window.status.text()
+    finally:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
+            winreg.SetValueEx(k, "MaxCapacity", 0, winreg.REG_DWORD, old)
+
+
+@pytest.mark.sandbox
+def test_large_all_refused_selection_is_quick_and_counted(window, work, dialogs):
+    """F51 + F53: 5,000 items all refused (recycling switched off) come back at once, and the status counts them."""
+    for i in range(5000):
+        with open(os.path.join(work, f"{i:04d}.txt"), "wb") as f:
+            f.write(b"x")
+    root = h.scan(window, work)
+    _set_policy("NoRecycleFiles", 1)
+    try:
+        t0 = time.time()
+        window.trash(list(root.files))
+        secs = time.time() - t0
+        assert window.status.text().startswith("Can't recycle 5,000 items") or \
+            window.status.text().startswith("Can't recycle 5000 items"), window.status.text()
+        assert secs < 5, f"refusing 5,000 items took {secs:.1f}s"
+        assert len(os.listdir(work)) == 5000 and not dialogs.texts
+    finally:
+        _set_policy("NoRecycleFiles", None)
+
+
+@pytest.mark.sandbox
+def test_drive_list_never_probes_empty_removable_or_optical_drives(window, monkeypatch):
+    """F55: a not-ready card reader or DVD drive must not be touched (it could pop up "no disk in the drive")."""
+    k32 = bf.ctypes.windll.kernel32
+    real_mask, real_type = k32.GetLogicalDrives, k32.GetDriveTypeW
+    fake = {"R:\\": 5, "U:\\": 2}  # an empty DVD drive and an empty card reader that don't exist here
+    monkeypatch.setattr(k32, "GetLogicalDrives", lambda: real_mask() | (1 << 17) | (1 << 20))
+    monkeypatch.setattr(k32, "GetDriveTypeW", lambda root: fake.get(str(root).upper(), None) or real_type(root))
+    probed = []
+    real_isdir = bf.os.path.isdir
+    monkeypatch.setattr(bf.os.path, "isdir", lambda p: probed.append(p) or real_isdir(p))
+    window.fill_drives()
+    assert not [p for p in probed if p.upper() in fake], probed
+    assert window.drives.findData("R:\\") == -1 and window.drives.findData("U:\\") == -1
