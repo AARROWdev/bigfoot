@@ -99,9 +99,10 @@ def recycle_refusal(path, size, batch=None):
     total = QStorageInfo(vol.value).bytesTotal()
     cap = setting(bin_key, "MaxCapacity")  # MB; Windows' default when it was never changed is 5% of the drive
     cap = cap * 2**20 if cap is not None else total // 20
-    pct = setting(policy, "RecycleBinSize") or setting(policy, "RecycleBinSize", winreg.HKEY_LOCAL_MACHINE)
-    if pct is not None:  # a Group Policy size limit (percent of the drive) overrides the user's setting
-        cap = min(cap, total * pct // 100)
+    pcts = [p for p in (setting(policy, "RecycleBinSize"), setting(policy, "RecycleBinSize", winreg.HKEY_LOCAL_MACHINE))
+            if p is not None]
+    if pcts:  # a Group Policy size limit (percent of the drive, 0 included) overrides the user's; the smaller wins
+        cap = min(cap, total * min(pcts) // 100)
     batch = {} if batch is None else batch
     before = batch.get(guid.value, 0)
     if before + size > cap:
