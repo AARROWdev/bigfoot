@@ -82,8 +82,9 @@ def recycle_refusal(path, size, batch=None):
     vol, guid = ctypes.create_unicode_buffer(1024), ctypes.create_unicode_buffer(64)
     if not (k32.GetVolumePathNameW(path, vol, 1024) and k32.GetVolumeNameForVolumeMountPointW(vol.value, guid, 64)):
         return None  # not a local volume (share, subst, long path): moveToTrash refuses those by itself
-    if k32.GetDriveTypeW(vol.value) == 2:  # DRIVE_REMOVABLE: USB sticks and memory cards
-        return "it's on a removable drive, which has no Recycle Bin, so Windows would delete it for good"
+    if k32.GetDriveTypeW(vol.value) != 3:  # only fixed drives have a Recycle Bin (shares and subst returned above)
+        return ("it's not on a fixed drive (a USB stick, memory card, CD/DVD or RAM disk has no Recycle Bin), "
+                "so Windows would delete it for good")
 
     def setting(key, name, hive=winreg.HKEY_CURRENT_USER):
         try:
@@ -99,8 +100,8 @@ def recycle_refusal(path, size, batch=None):
     total = QStorageInfo(vol.value).bytesTotal()
     cap = setting(bin_key, "MaxCapacity")  # MB; Windows' default when it was never changed is 5% of the drive
     cap = cap * 2**20 if cap is not None else total // 20
-    pcts = [p for p in (setting(policy, "RecycleBinSize"), setting(policy, "RecycleBinSize", winreg.HKEY_LOCAL_MACHINE))
-            if p is not None]
+    pcts = [p for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE)
+            if (p := setting(policy, "RecycleBinSize", hive)) is not None]
     if pcts:  # a Group Policy size limit (percent of the drive, 0 included) overrides the user's; the smaller wins
         cap = min(cap, total * min(pcts) // 100)
     batch = {} if batch is None else batch
