@@ -559,10 +559,11 @@ def test_default_recycle_bin_size_fallback_is_safe(window, work, dialogs):
 
 # G14: round-2 review findings. Removable drives, Group Policy size, MaxCapacity 0, a big all-refused selection,
 # and drive probing (F48, F50, F51, F52, F55). Windows settings are changed in the Sandbox only, and put back.
-def _set_policy(name, value):
+def _set_policy(name, value, machine=False):
     import winreg
     key = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
-    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_ALL_ACCESS) as k:
+    hive = winreg.HKEY_LOCAL_MACHINE if machine else winreg.HKEY_CURRENT_USER
+    with winreg.CreateKeyEx(hive, key, 0, winreg.KEY_ALL_ACCESS) as k:
         if value is None:
             try:
                 winreg.DeleteValue(k, name)
@@ -580,28 +581,47 @@ def _bin_key(drive="C:\\"):
 
 
 @pytest.mark.sandbox
-def test_removable_drive_is_refused(window, work, dialogs, monkeypatch):
-    """F48: USB sticks and memory cards have no Recycle Bin (simulated: C: reported as DRIVE_REMOVABLE)."""
+@pytest.mark.parametrize("kind", [2, 5, 6, 0])  # removable, CD/DVD, RAM disk, unknown
+def test_drives_that_are_not_fixed_are_refused(window, work, dialogs, monkeypatch, kind):
+    """F48 + F57: only fixed drives have a Recycle Bin (simulated: C: reported as another drive type)."""
     h.empty_bin()
-    p = h.put(os.path.join(work, "on_usb.bin"), size=100)
+    p = h.put(os.path.join(work, "elsewhere.bin"), size=100)
     h.scan(window, work)
     k32 = bf.ctypes.windll.kernel32
     real = k32.GetDriveTypeW
-    monkeypatch.setattr(k32, "GetDriveTypeW", lambda root: 2 if str(root).upper().startswith("C:") else real(root))
+    monkeypatch.setattr(k32, "GetDriveTypeW", lambda root: kind if str(root).upper().startswith("C:") else real(root))
     n = len(dialogs.texts)
     recycle_one(window, p, dialogs)
     assert os.path.exists(p) and not h.in_bin(p)
-    assert "removable drive" in window.status.text() and len(dialogs.texts) == n
+    assert "not on a fixed drive" in window.status.text() and len(dialogs.texts) == n, window.status.text()
 
 
 @pytest.mark.sandbox
-def test_recycle_bin_size_policy_is_honoured(window, work, dialogs):
-    """F50: a 1% "Maximum allowed Recycle Bin size" policy overrides the bigger user setting."""
+@pytest.mark.parametrize("user,machine", [(1, None), (None, 1), (5, 1), (1, 5)])
+def test_recycle_bin_size_policy_is_honoured(window, work, dialogs, user, machine):
+    """F50 + F56: a 1% "Maximum allowed Recycle Bin size" policy (per user or per machine) overrides the bigger
+    user setting, and when both are set the smaller one wins."""
     h.empty_bin()
     total = bf.QStorageInfo("C:\\").bytesTotal()
     p = os.path.join(work, "two_percent.img")
-    h.sparse(p, total // 50)  # 2% of the drive: under the user's limit, over the policy's
-    _set_policy("RecycleBinSize", 1)
+    h.sparse(p, total // 50)  # 2% of the drive: under the user's limit, over the smaller policy
+    _set_policy("RecycleBinSize", user)
+    _set_policy("RecycleBinSize", machine, machine=True)
+    try:
+        h.scan(window, work)
+        recycle_one(window, p, dialogs)
+        assert os.path.exists(p) and "bigger than" in window.status.text(), window.status.text()
+    finally:
+        _set_policy("RecycleBinSize", None)
+        _set_policy("RecycleBinSize", None, machine=True)
+
+
+@pytest.mark.sandbox
+def test_zero_percent_policy_counts(window, work, dialogs):
+    """F56: a 0% policy is set (nothing fits), not "no policy"."""
+    h.empty_bin()
+    p = h.put(os.path.join(work, "tiny.bin"), size=1000)
+    _set_policy("RecycleBinSize", 0)
     try:
         h.scan(window, work)
         recycle_one(window, p, dialogs)
