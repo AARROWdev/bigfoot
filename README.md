@@ -58,7 +58,7 @@ A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTra
 - **Names Windows can't recycle:** trailing dots or spaces, unpaired surrogates, device names like `CON`, `NUL.txt`, `COM1`
 
 ## Tested in a throwaway Windows
-`tests/` holds 432 automated tests that run inside a fresh Windows Sandbox (429 of them; the other 3 need a second physical drive, which the Sandbox can't provide), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
+`tests/` holds 432 automated tests that run inside a fresh Windows Sandbox (429 of them; the other 3 need a virtual disk, which the Sandbox can't mount), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
 
 Release bar: all 429 pass **3 full runs in a row** on the released build. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
 
