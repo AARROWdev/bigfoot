@@ -53,14 +53,14 @@ A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTra
 
 - **No Recycle Bin on that drive:** USB sticks, SD cards, CD/DVD, RAM disks, anything that isn't a fixed drive
 - **Recycling turned off** for that drive (`NukeOnDelete`)
-- **Too big for the bin:** each item is checked against the drive's bin size (`MaxCapacity`, the Windows 5% default, and the `RecycleBinSize` Group Policy, the smallest one wins). A selection too big for the bin *together* is refused too, because Windows would otherwise purge the items it recycled seconds earlier.
+- **Too big for the bin:** each item is checked against the drive's bin size (its `MaxCapacity` setting, or the Windows default of 5% if it was never changed), lowered to the `RecycleBinSize` Group Policy when that is smaller. A selection too big for the bin *together* is refused too, because Windows would otherwise purge the items it recycled seconds earlier.
 - **Size not known:** a folder only partly scanned because you pressed Stop
 - **Names Windows can't recycle:** trailing dots or spaces, unpaired surrogates, device names like `CON`, `NUL.txt`, `COM1`
 
 ## Tested in a throwaway Windows
 `tests/` holds 429 automated tests that run inside a fresh Windows Sandbox, so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
 
-Release bar: every test passes **3 full runs in a row**. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
+Release bar: **3 clean full runs in a row** (G12's 3 second-drive tests skip in the Sandbox); the 13 tests added for the last review fixes passed a full run. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
 
 | Measured in the Sandbox | |
 |---|---|
