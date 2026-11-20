@@ -6,8 +6,8 @@
 <rect x="40" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
 <text x="60" y="240" font-size="26" font-weight="700" fill="#f2c14e">1,000,000 files</text>
 <text x="60" y="272" font-size="16" fill="#9aa4b2">scanned in 16 s</text><rect x="340" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
-<text x="360" y="240" font-size="26" font-weight="700" fill="#f2c14e">429 tests</text>
-<text x="360" y="272" font-size="16" fill="#9aa4b2">in a throwaway Windows Sandbox</text><rect x="640" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
+<text x="360" y="240" font-size="26" font-weight="700" fill="#f2c14e">Treemap</text>
+<text x="360" y="272" font-size="16" fill="#9aa4b2">every folder sized at a glance</text><rect x="640" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
 <text x="660" y="240" font-size="26" font-weight="700" fill="#f2c14e">0 silent deletes</text>
 <text x="660" y="272" font-size="16" fill="#9aa4b2">the Recycle Bin or nothing</text>
 </svg>

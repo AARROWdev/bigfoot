@@ -3,7 +3,7 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
-      <img alt="Bigfoot. Find what's eating your disk. A fast disk space analyzer for Windows: 1,000,000 files scanned in 16 seconds, 429 automated tests in a throwaway Windows Sandbox, and it never deletes a file for good while saying it was recycled." src="docs/hero-dark.svg" width="100%">
+      <img alt="Bigfoot. Find what's eating your disk. A fast disk space analyzer for Windows: 1,000,000 files scanned in 16 seconds, a treemap of every folder, and it never deletes a file for good while saying it was recycled." src="docs/hero-dark.svg" width="100%">
     </picture>
   </a>
 </p>
