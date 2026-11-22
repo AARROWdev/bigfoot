@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 import winreg
+import suite_style
 
 from PySide6.QtCore import (QAbstractEventDispatcher, QAbstractItemModel, QByteArray, QEvent, QItemSelectionModel,
                             QModelIndex, QObject, QPointF, QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
@@ -1363,40 +1364,7 @@ def foot_icon(size=256):
 
 # ---------------------------------------------------------------- theme + main
 def apply_theme(app):
-    app.setStyle("Fusion")
-    p = QPalette()
-    text = QColor("#e6e8ec")
-    for role, col in ((QPalette.Window, "#1f242c"), (QPalette.Base, "#13161c"), (QPalette.AlternateBase, "#181c23"),
-                      (QPalette.Button, "#1f242c"), (QPalette.ToolTipBase, "#181c23"), (QPalette.Highlight, "#24405e")):
-        p.setColor(role, QColor(col))
-    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText, QPalette.ToolTipText):
-        p.setColor(role, text)
-    p.setColor(QPalette.HighlightedText, QColor("#ffffff"))
-    p.setColor(QPalette.PlaceholderText, QColor("#7d8088"))
-    app.setPalette(p)
-    app.setStyleSheet(f"""
-        QTreeView, QTableWidget {{ border:1px solid #2a3039; }}
-        QHeaderView::section {{ background:#181c23; color:#b9bcc4; border:0; border-right:1px solid #2a3039;
-                                padding:4px 6px; }}
-        QLineEdit, QComboBox {{ background:#13161c; border:1px solid #2a3039; border-radius:4px; padding:4px 6px; }}
-        QLineEdit:focus {{ border-color:{ACCENT}; }}
-        QPushButton#primary {{ background:{ACCENT}; color:#04121f; font-weight:700; border:0; border-radius:4px;
-                               padding:5px 18px; }}
-        QPushButton#primary:hover {{ background:#5cb2ff; }}
-        QPushButton#primary:disabled {{ background:#33404f; color:#8a96a3; }}
-        QToolButton {{ padding:4px 8px; border-radius:4px; }}
-        QToolButton:hover {{ background:#2a3039; }}
-        QToolButton:checked {{ background:#24405e; }}
-        QProgressBar {{ background:#13161c; border:1px solid #2a3039; border-radius:3px; color:#e6e8ec;
-                        text-align:center; font-size:11px; }}
-        QProgressBar::chunk {{ background:{ACCENT}; border-radius:2px; }}
-        QTabWidget::pane {{ border:0; }}
-        QTabBar::tab {{ background:#181c23; color:#b9bcc4; padding:6px 14px; border:0; margin-right:2px; }}
-        QTabBar::tab:selected {{ background:#24405e; color:#ffffff; }}
-        QLabel#crumb {{ color:#c9d3e0; }}
-        QSplitter::handle {{ background:#1f242c; }}
-        QMenu::item:selected {{ background:#24405e; }}
-    """)
+    suite_style.apply(app, suite_style.BLUE)
 
 
 def install_error_log():
