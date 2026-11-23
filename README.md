@@ -31,7 +31,7 @@ The app isn't code-signed yet, so Windows may show "Windows protected your PC": 
 
 ## What it does
 - **Fast scan** of any drive, folder or network share: multi-threaded, live progress, and the tree fills in while it scans
-- **Biggest-first tree:** size, % of drive bar, files, folders, newest modified date. Click any column to sort.
+- **Biggest-first tree:** size on disk, % of drive bar, files, folders, newest modified date. Click any column to sort.
 - **Map:** a squarified treemap of the selected folder, colored by file type. Click to find it in the tree, double-click a folder to zoom in, right-click or Up to zoom out.
 - **Types:** space by extension and category (video, audio, images, archives, disk images, programs, documents, code)
 - **Top 100 files** under the selected folder
@@ -47,6 +47,15 @@ The app isn't code-signed yet, so Windows may show "Windows protected your PC": 
 | Backspace (on map) | Zoom out |
 
 Folders Windows won't let you read are counted as "access denied" in the status bar; run as administrator to include them.
+
+## Sizes are what the files take on disk
+Bigfoot ranks and totals the space a file occupies on the drive, not its length, so a folder's size is what you get back by deleting it and a drive's total never goes past what Windows says is used:
+- **Sparse files** (VM disks, databases, test placeholders) count what they hold. A 400 GB sparse file that holds nothing counts 0.
+- **Compressed files** (NTFS compression, Windows "compact OS") count their compressed size.
+- **Cloud placeholders** (OneDrive "online-only" files) count 0 and are never opened, so a scan can't make them download.
+- **Hard links** (the same file under several names, as in WinSxS) count once. The first name by path takes the size; the other names are listed with 0.
+
+The columns say "Size on disk". The one place Bigfoot goes by a file's length is the Recycle Bin check below, because that is what Windows compares with the bin's size. Telling hard links apart takes one attribute lookup per file (never a read), which costs some scan time on a drive with millions of files.
 
 ## The part worth reading: delete means recycle
 A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTrash` (like the shell call underneath it) will quietly delete a file permanently and still report success when the Recycle Bin can't take it. Bigfoot checks before it sends anything, and refuses with a reason instead:
@@ -75,7 +84,7 @@ python -m venv .venv
 winget install JRSoftware.InnoSetup   # installer compiler
 .\build.ps1   # -> dist\BigfootSetup-<ver>.exe, dist\Bigfoot-<ver>-portable-win64.zip
 ```
-`Bigfoot.bat` runs it from source. `tests\sandbox\run-tests.ps1` runs the full suite in a fresh Windows Sandbox.
+`Bigfoot.bat` runs it from source. `tests\sandbox\run-tests.ps1` runs the full suite in a fresh Windows Sandbox. The screenshots above are of a folder of real files (about 2.5 GB, each taking exactly what Bigfoot shows): `tools\make_demo.py <folder>` builds it and `tools\screenshots.py <folder>` takes them.
 Settings live in the registry (`HKCU\Software\Bigfoot`); `error.log` is in `%LOCALAPPDATA%\Bigfoot\`.
 
 ## How it was built
@@ -86,5 +95,4 @@ Python and PySide6 (Qt 6), one 1,400-line file. Built with [Claude Code](https:/
 
 ## Later
 - NTFS master file table reader (whole-drive scans in seconds, needs admin)
-- Hard-link de-duplication (WinSxS), allocated size on disk
 - Mac version
