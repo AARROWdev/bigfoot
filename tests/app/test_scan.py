@@ -28,6 +28,15 @@ def check_against_truth(root_obj, root_path):
     assert seen == len(t), "folder count differs from ground truth"
 
 
+def test_the_ui_tests_run_headless_off_the_sandbox(qapp):
+    """On a real PC the window tests must not show a window (conftest sets QT_QPA_PLATFORM=offscreen)."""
+    if h.IN_SANDBOX:
+        pytest.skip("in the Sandbox the real platform is used (nobody's screen is at risk there)")
+    if os.environ.get("QT_QPA_PLATFORM") not in (None, "offscreen"):
+        pytest.skip("QT_QPA_PLATFORM was set to look at the windows on purpose")
+    assert qapp.platformName() == "offscreen"
+
+
 # 6
 def test_totals_match_ground_truth(window, work):
     h.make_tree(work, {

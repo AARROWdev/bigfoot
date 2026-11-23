@@ -764,7 +764,8 @@ class Window(QMainWindow):
         self.tree.header().setSectionsMovable(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(C_NAME, QHeaderView.Stretch)
-        for c, w in ((C_SIZE, 150), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
+        fm = self.tree.header().fontMetrics()
+        for c, w in ((C_SIZE, fm.horizontalAdvance(COLS[C_SIZE]) + 44), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
             self.tree.setColumnWidth(c, w)
         self.tree.setItemDelegateForColumn(C_PCT, BarDelegate(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)

@@ -53,6 +53,7 @@ def main():
             if w.scanner.t1 and w.status.text().startswith("Scanned"):
                 break
         else:
+            w.scanner.stop()
             raise SystemExit("the scan didn't finish")
         pump(app, 0.5)
         out = os.path.join(ROOT, "docs")
@@ -62,6 +63,8 @@ def main():
             w.grab().save(os.path.join(out, f"{name}.png"))
             print("wrote", os.path.join(out, f"{name}.png"))
         print(w.status.text())
+        w.close()  # (before the temp folder goes: closing saves the settings)
+        pump(app, 0.2)
         gc.collect()
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -49,7 +49,7 @@ The app isn't code-signed yet, so Windows may show "Windows protected your PC": 
 Folders Windows won't let you read are counted as "access denied" in the status bar; run as administrator to include them.
 
 ## Sizes are what the files take on disk
-Bigfoot ranks and totals the space a file occupies on the drive, not its length, so the totals add up and a drive's total stays within what Windows says is used. It is the file's real size, byte for byte, not rounded up to whole clusters the way Explorer's "Size on disk" is:
+Bigfoot ranks and totals the space a file occupies on the drive, not the length it claims, so the totals add up and a drive's total stays within what Windows says is used. For an ordinary file that is its exact length; Explorer's "Size on disk" rounds every file up to whole clusters, so it can show a little more:
 - **Sparse files** (VM disks, databases, test placeholders) count what they hold. A 400 GB sparse file that holds nothing counts 0.
 - **Compressed files** (NTFS compression, Windows "compact OS") count their compressed size.
 - **Cloud placeholders** (OneDrive "online-only" files) count 0 and are never opened, so a scan can't make them download.

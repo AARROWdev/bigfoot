@@ -94,12 +94,12 @@ def build(folder, spec, scale, rnd):
     return total
 
 
-def backdate_folders(top, rnd):
+def backdate_folders(top):
     """A folder's date is when it last changed: today for all of them, since they were just made. Give each the
     date of its newest file, bottom-up, so Modified reads like a real folder."""
     newest = 0
     for e in os.scandir(top):
-        newest = max(newest, backdate_folders(e.path, rnd) if e.is_dir() else e.stat().st_mtime)
+        newest = max(newest, backdate_folders(e.path) if e.is_dir() else e.stat().st_mtime)
     if newest:
         os.utime(top, (newest, newest))
     return newest
@@ -112,15 +112,17 @@ def main():
     a = ap.parse_args()
     if os.path.exists(a.folder):
         raise SystemExit(f"{a.folder} already exists: choose a new folder")
-    os.makedirs(os.path.dirname(os.path.abspath(a.folder)), exist_ok=True)
-    need = planned_bytes(LAYOUT, a.scale)
-    free = shutil.disk_usage(os.path.dirname(os.path.abspath(a.folder))).free
-    if free < need * 1.5:
-        raise SystemExit(f"needs about {need / MB:,.0f} MB free, {free / MB:,.0f} MB is: choose another drive")
+    parent = os.path.dirname(os.path.abspath(a.folder))
+    while not os.path.isdir(parent):  # (the free space of the drive the folder will be made on)
+        parent = os.path.dirname(parent)
+    need = int(planned_bytes(LAYOUT, a.scale) * 1.5)  # the sizes vary a little around the plan
+    free = shutil.disk_usage(parent).free
+    if free < need:
+        raise SystemExit(f"needs {need / MB:,.0f} MB free, {free / MB:,.0f} MB is: choose another drive")
     rnd = random.Random(7)
     try:
         total = build(a.folder, LAYOUT, a.scale, rnd)
-        backdate_folders(a.folder, rnd)
+        backdate_folders(a.folder)
     except BaseException:
         shutil.rmtree(a.folder, ignore_errors=True)  # a half-built folder would block the next run
         raise
