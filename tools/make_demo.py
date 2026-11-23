@@ -1,15 +1,16 @@
 """Builds the demo folder the README screenshots are taken of.
 
-Every file is real: it holds random bytes and takes exactly the size Bigfoot shows for it. Nothing is sparse and
-nothing is a placeholder, so the screenshots claim nothing the files don't take. The folder holds about 2.4 GB at
+Every file is real: it holds random bytes and is exactly the size Bigfoot shows for it. Nothing is sparse and
+nothing is a placeholder, so the screenshots claim nothing the files don't take. The folder holds about 2.5 GB at
 the default scale (0.6); --scale 1 makes about 4 GB. Needs that much free space on the drive.
 
-    python tools\\make_demo.py D:\\BigfootDemo            build it
-    python tools\\make_demo.py D:\\BigfootDemo --scale 1  bigger
+    python tools\\make_demo.py D:\\Demo            build it
+    python tools\\make_demo.py D:\\Demo --scale 1  bigger
 """
 import argparse
 import os
 import random
+import shutil
 import time
 
 MB = 1 << 20
@@ -49,6 +50,19 @@ LAYOUT = {
 }
 
 
+def planned_bytes(spec, scale):
+    """About how much the layout writes (the random spread of sizes averages out)."""
+    total = 0
+    for v in spec.values():
+        if isinstance(v, dict):
+            total += planned_bytes(v, scale)
+        elif isinstance(v, tuple):
+            total += int(v[0] * v[1] * MB * scale)
+        else:
+            total += int(v * MB * scale)
+    return total
+
+
 def write_random(path, size, rnd):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     left = size
@@ -80,6 +94,17 @@ def build(folder, spec, scale, rnd):
     return total
 
 
+def backdate_folders(top, rnd):
+    """A folder's date is when it last changed: today for all of them, since they were just made. Give each the
+    date of its newest file, bottom-up, so Modified reads like a real folder."""
+    newest = 0
+    for e in os.scandir(top):
+        newest = max(newest, backdate_folders(e.path, rnd) if e.is_dir() else e.stat().st_mtime)
+    if newest:
+        os.utime(top, (newest, newest))
+    return newest
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("folder", help="where to build it (must not exist yet)")
@@ -87,7 +112,18 @@ def main():
     a = ap.parse_args()
     if os.path.exists(a.folder):
         raise SystemExit(f"{a.folder} already exists: choose a new folder")
-    total = build(a.folder, LAYOUT, a.scale, random.Random(7))
+    os.makedirs(os.path.dirname(os.path.abspath(a.folder)), exist_ok=True)
+    need = planned_bytes(LAYOUT, a.scale)
+    free = shutil.disk_usage(os.path.dirname(os.path.abspath(a.folder))).free
+    if free < need * 1.5:
+        raise SystemExit(f"needs about {need / MB:,.0f} MB free, {free / MB:,.0f} MB is: choose another drive")
+    rnd = random.Random(7)
+    try:
+        total = build(a.folder, LAYOUT, a.scale, rnd)
+        backdate_folders(a.folder, rnd)
+    except BaseException:
+        shutil.rmtree(a.folder, ignore_errors=True)  # a half-built folder would block the next run
+        raise
     print(f"{a.folder}: {total / MB:,.0f} MB in real files")
 
 

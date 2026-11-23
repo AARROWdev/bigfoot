@@ -49,7 +49,7 @@ The app isn't code-signed yet, so Windows may show "Windows protected your PC": 
 Folders Windows won't let you read are counted as "access denied" in the status bar; run as administrator to include them.
 
 ## Sizes are what the files take on disk
-Bigfoot ranks and totals the space a file occupies on the drive, not its length, so a folder's size is what you get back by deleting it and a drive's total never goes past what Windows says is used:
+Bigfoot ranks and totals the space a file occupies on the drive, not its length, so the totals add up and a drive's total stays within what Windows says is used. It is the file's real size, byte for byte, not rounded up to whole clusters the way Explorer's "Size on disk" is:
 - **Sparse files** (VM disks, databases, test placeholders) count what they hold. A 400 GB sparse file that holds nothing counts 0.
 - **Compressed files** (NTFS compression, Windows "compact OS") count their compressed size.
 - **Cloud placeholders** (OneDrive "online-only" files) count 0 and are never opened, so a scan can't make them download.
@@ -84,11 +84,11 @@ python -m venv .venv
 winget install JRSoftware.InnoSetup   # installer compiler
 .\build.ps1   # -> dist\BigfootSetup-<ver>.exe, dist\Bigfoot-<ver>-portable-win64.zip
 ```
-`Bigfoot.bat` runs it from source. `tests\sandbox\run-tests.ps1` runs the full suite in a fresh Windows Sandbox. The screenshots above are of a folder of real files (about 2.5 GB, each taking exactly what Bigfoot shows): `tools\make_demo.py <folder>` builds it and `tools\screenshots.py <folder>` takes them.
+`Bigfoot.bat` runs it from source. `tests\sandbox\run-tests.ps1` runs the full suite in a fresh Windows Sandbox. The screenshots above are of a folder of real files (about 2.5 GB of real data, every file at the size Bigfoot shows): `tools\make_demo.py <folder>` builds it and `tools\screenshots.py <folder>` takes them.
 Settings live in the registry (`HKCU\Software\Bigfoot`); `error.log` is in `%LOCALAPPDATA%\Bigfoot\`.
 
 ## How it was built
-Python and PySide6 (Qt 6), one 1,400-line file. Built with [Claude Code](https://claude.com/claude-code): a written spec of what must work and what counts as a bug, a separate AI reviewer session checking every change against it until zero findings, and the Sandbox suite above as the release gate.
+Python and PySide6 (Qt 6), one 1,500-line file. Built with [Claude Code](https://claude.com/claude-code): a written spec of what must work and what counts as a bug, a separate AI reviewer session checking every change against it until zero findings, and the Sandbox suite above as the release gate.
 
 ## License
 [MIT](LICENSE)
