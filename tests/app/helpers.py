@@ -52,6 +52,56 @@ def sparse(path, size):
         _k.CloseHandle(h)
 
 
+_k.GetCompressedFileSizeW.argtypes = [w.LPCWSTR, ctypes.POINTER(w.DWORD)]
+_k.GetCompressedFileSizeW.restype = w.DWORD
+_k.SetFileAttributesW.argtypes = [w.LPCWSTR, w.DWORD]
+_k.GetDiskFreeSpaceExW.argtypes = [w.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+
+
+def on_disk(path):
+    """What Windows says the file occupies (an independent ask: every file, not only sparse or compressed ones)."""
+    hi = w.DWORD()
+    ctypes.set_last_error(0)
+    lo = _k.GetCompressedFileSizeW(lp(path), ctypes.byref(hi))
+    if lo == 0xFFFFFFFF and ctypes.get_last_error():
+        raise ctypes.WinError(ctypes.get_last_error())
+    return (hi.value << 32) | lo
+
+
+def compressed(path, data):
+    """An NTFS-compressed file holding data (skips the test where the volume can't compress)."""
+    import pytest
+    os.makedirs(lp(os.path.dirname(path)), exist_ok=True)
+    hd = _k.CreateFileW(lp(path), 0xC0000000, 0, None, 2, 0x80, None)
+    if hd == INVALID:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fmt, n = w.USHORT(1), w.DWORD()  # COMPRESSION_FORMAT_DEFAULT
+        if not _k.DeviceIoControl(hd, 0x9C040, ctypes.byref(fmt), 2, None, 0, ctypes.byref(n), None):  # FSCTL_SET_COMPRESSION
+            pytest.skip("this volume can't compress files")
+    finally:
+        _k.CloseHandle(hd)
+    with open(lp(path), "r+b") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())  # NTFS compresses when the data is written back, not when it is cached
+    if on_disk(path) >= len(data):
+        pytest.skip("this volume didn't compress the file")
+
+
+def set_attrs(path, attrs):
+    if not _k.SetFileAttributesW(lp(path), attrs):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def used_bytes(path):
+    """Space in use on the volume of path, as Windows reports it (GetDiskFreeSpaceEx)."""
+    total, free = ctypes.c_ulonglong(), ctypes.c_ulonglong()
+    if not _k.GetDiskFreeSpaceExW(os.path.abspath(path), None, ctypes.byref(total), ctypes.byref(free)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return total.value - free.value
+
+
 def put(path, size=None, data=None, mtime=None):
     """A real file with random content (so hashes mean something)."""
     os.makedirs(lp(os.path.dirname(path)), exist_ok=True)
@@ -106,30 +156,54 @@ def random_tree(root, seed, max_depth=5, max_entries=8, names=None):
 
 
 def truth(root):
-    """Ground truth with Bigfoot's rules: links/junctions skipped, sizes are logical (st_size).
+    """Ground truth with Bigfoot's rules: links/junctions skipped, sizes are what the files occupy on disk
+    (GetCompressedFileSize; a file marked OFFLINE counts 0; of the hard links to one file the first path counts).
     Returns {dir_path: (size, nfiles, ndirs)} for every folder under root (root included)."""
-    out = {}
+    dirs, files, owner = {}, [], {}  # dir -> (nfiles, ndirs); files: (dir, path, size); owner: file id -> first path
 
     def walk(d):
-        size = nf = nd = 0
+        nf = nd = 0
         with os.scandir(lp(d)) as it:
             entries = list(it)
         for e in entries:
             if e.is_symlink() or e.is_junction():
                 continue
             if e.is_dir(follow_symlinks=False):
-                s, f, n = walk(os.path.join(d, e.name))
-                size += s
+                f, n = walk(os.path.join(d, e.name))
                 nf += f
                 nd += n + 1
             else:
-                size += e.stat(follow_symlinks=False).st_size
+                p = os.path.join(d, e.name)
+                if e.stat(follow_symlinks=False).st_file_attributes & 0x1000:  # OFFLINE
+                    size = 0
+                else:
+                    size = on_disk(p)
+                    st = os.stat(lp(p), follow_symlinks=False)
+                    if st.st_nlink > 1:
+                        k = (st.st_dev, st.st_ino)
+                        if k in owner and owner[k] < p:
+                            size = 0
+                        elif k in owner:  # an earlier path was taken by mistake: the smaller path owns it
+                            for i, (fd, fp, fs) in enumerate(files):
+                                if fp == owner[k]:
+                                    files[i] = (fd, fp, 0)
+                            owner[k] = p
+                        else:
+                            owner[k] = p
+                files.append((d, p, size))
                 nf += 1
-        out[d] = (size, nf, nd)
-        return size, nf, nd
+        dirs[d] = (nf, nd)
+        return nf, nd
 
     walk(root)
-    return out
+    sizes = dict.fromkeys(dirs, 0)
+    for d, _, size in files:  # every folder from the file's own up to the root gets its size
+        while True:
+            sizes[d] += size
+            if d == root:
+                break
+            d = os.path.dirname(d)
+    return {d: (sizes[d], *dirs[d]) for d in dirs}
 
 
 def walk_no_links(top):

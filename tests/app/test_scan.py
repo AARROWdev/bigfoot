@@ -36,10 +36,13 @@ def test_totals_match_ground_truth(window, work):
         "c.iso": 999_999,
         "d": {f"f{i}.jpg": i * 17 for i in range(200)},
     })
-    h.sparse(os.path.join(work, "huge.vhdx"), 3 << 40)  # 3 TB logical
+    h.sparse(os.path.join(work, "huge.vhdx"), 3 << 40)  # 3 TB long, nothing on disk
     root = h.scan(window, work)
     check_against_truth(root, work)
-    assert root.size == sum(os.path.getsize(h.lp(os.path.join(dp, f))) for dp, _, fs in os.walk(h.lp(work)) for f in fs)
+    assert root.lsize == sum(os.path.getsize(h.lp(os.path.join(dp, f))) for dp, _, fs in os.walk(h.lp(work)) for f in fs)
+    assert root.size < root.lsize - (3 << 40) + (1 << 20)  # the 3 TB is not in the size on disk
+    assert bf.COLS[bf.C_SIZE] == "Size on disk"
+    assert " on disk" in window.status.text()
     idx = window.model.index_for(root)
     assert window.model.data(idx.siblingAtColumn(bf.C_SIZE)) == bf.human(root.size)
     assert window.model.data(idx.siblingAtColumn(bf.C_FILES)) == f"{root.nfiles:,}"
@@ -446,10 +449,91 @@ def test_hard_links_streams_attributes_compressed_sparse(window, work):
     subprocess.run(["compact", "/c", os.path.join(work, "comp.txt")], capture_output=True)
     h.sparse(os.path.join(work, "sparse.img"), 1 << 33)
     root = h.scan(window, work)
-    # Decided rules (2026-11-16): sizes are file sizes as Explorer shows them, so a hard link is counted
-    # once per name, alternate data streams aren't counted, and compressed / sparse files count their full size.
-    assert root.size == 10_000 * 2 + 1 + 11 + 13 + 200_000 + (1 << 33)
+    # Rules (2026-11-24): sizes are what the files occupy on disk. A hard link is one file (counted once), alternate
+    # data streams aren't counted, a compressed file counts what it takes compressed, a sparse file what it holds.
+    # The length of every name is kept apart (lsize) for the Recycle Bin check.
+    assert root.lsize == 10_000 * 2 + 1 + 11 + 13 + 200_000 + (1 << 33)
+    assert 10_000 + 1 + 11 + 13 <= root.size <= 10_000 + 1 + 11 + 13 + 200_000  # not the hard link twice, not the 8 GB
+    assert root.size == h.truth(work)[work][0]
     assert root.nfiles == 7
+
+
+# Size on disk (Aaron, 2026-11-24: C: showed 1.3 TB on a 455 GB drive, and a folder of 4,377 sparse placeholder
+# files that take 0 bytes was the biggest thing on it). Each of these failed on the code that added up lengths.
+def test_sparse_file_counts_what_it_holds_not_its_length(window, work):
+    vm = os.path.join(work, "vm.img")
+    h.make_tree(work, {"real.bin": 5000})
+    h.sparse(vm, 400 << 30)  # 400 GB long, nothing on disk
+    root = h.scan(window, work)
+    f = h.find_dir(root, vm)
+    assert f.size < 1 << 16 and f.size == h.on_disk(vm)
+    assert f.lsize == 400 << 30
+    assert root.size == 5000 + f.size < 1 << 20
+    assert root.lsize == 5000 + (400 << 30)
+
+
+def test_compressed_file_counts_its_compressed_size(window, work):
+    p = os.path.join(work, "log.txt")
+    h.compressed(p, b"a" * (4 << 20))
+    root = h.scan(window, work)
+    f = h.find_dir(root, p)
+    assert f.lsize == 4 << 20
+    assert f.size == h.on_disk(p) and f.size <= (4 << 20) // 8  # zeros-like data: far smaller than its length
+    assert root.size == f.size
+
+
+def test_hard_links_count_once(window, work):
+    h.make_tree(work, {"a": {"orig.bin": 10_000}, "b": {}, "c": {"sub": {}}})
+    first = os.path.join(work, "a", "orig.bin")
+    l1, l2 = os.path.join(work, "b", "link1.bin"), os.path.join(work, "c", "sub", "link2.bin")
+    os.link(first, l1)
+    os.link(first, l2)
+    root = h.scan(window, work)
+    assert root.size == 10_000 and root.nfiles == 3  # three names, one file's bytes
+    assert root.lsize == 30_000
+    # the first name by path owns the size, the others are listed but add nothing (the same on every scan)
+    assert [h.find_dir(root, p).size for p in (first, l1, l2)] == [10_000, 0, 0]
+    assert h.find_dir(root, os.path.join(work, "b")).size == 0
+    check_against_truth(root, work)
+
+
+def test_cloud_placeholder_counts_zero_and_is_never_opened(window, work, monkeypatch):
+    p = h.put(os.path.join(work, "cloud.bin"), size=100_000)
+    h.put(os.path.join(work, "local.bin"), size=1000)
+    h.set_attrs(p, 0x1000)  # FILE_ATTRIBUTE_OFFLINE: the data isn't on this PC
+    opened, real_stat, real_gcfs = [], os.stat, bf._k32.GetCompressedFileSizeW
+    monkeypatch.setattr(bf.os, "stat", lambda path, *a, **k: (opened.append(str(path)), real_stat(path, *a, **k))[1])
+    monkeypatch.setattr(bf._k32, "GetCompressedFileSizeW", lambda path, *a: (opened.append(str(path)), real_gcfs(path, *a))[1])
+    root = h.scan(window, work)
+    f = h.find_dir(root, p)
+    assert f.size == 0 and f.lsize == 100_000 and root.size == 1000
+    assert not any("cloud.bin" in o for o in opened), "a placeholder must not be opened (that can download it)"
+    assert any("local.bin" in o for o in opened)  # (the spy sees the other files)
+    check_against_truth(root, work)
+
+
+def test_a_total_never_exceeds_the_used_space_of_its_volume(window, work):
+    h.make_tree(work, {"a": {"real.bin": 200_000}})
+    h.sparse(os.path.join(work, "a", "vm.vhdx"), 5 << 40)  # 5 TB long
+    h.sparse(os.path.join(work, "b", "other.img"), 7 << 40)
+    h.compressed(os.path.join(work, "c.txt"), b"z" * (8 << 20))
+    os.link(os.path.join(work, "a", "real.bin"), os.path.join(work, "a", "again.bin"))
+    root = h.scan(window, work)
+    assert root.size <= h.used_bytes(work)
+    assert root.lsize > h.used_bytes(work)  # (the lengths alone would have been bigger than the drive)
+
+
+def test_recycle_check_goes_by_length_not_by_size_on_disk(window, work, monkeypatch):
+    big = os.path.join(work, "huge.img")
+    h.sparse(big, 4 << 40)
+    seen = []
+    monkeypatch.setattr(bf, "recycle_refusal", lambda path, size, batch=None: (seen.append(size), "test: refused")[1])
+    root = h.scan(window, work)
+    f = h.find_dir(root, big)
+    assert f.size < 1 << 16  # nothing on disk...
+    window.trash([f])
+    assert seen == [4 << 40]  # ...but Windows compares the length with the bin, so that is what is checked
+    assert "Can't recycle" in window.status.text()
 
 
 # 45

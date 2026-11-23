@@ -114,14 +114,45 @@ def recycle_refusal(path, size, batch=None):
     return None
 
 
+# ---------------------------------------------------------------- size on disk
+# Every size Bigfoot ranks and totals is what the file occupies on the drive ("size on disk"), not its length.
+# A sparse file (a VM disk, a placeholder) can be 400 GB long and take nothing; a compressed file takes less than
+# its length; a cloud placeholder (OneDrive "online-only") takes nothing here; and a hard link is the same
+# bytes under a second name. Adding up lengths made a drive "1.3 TB" on a 455 GB disk.
+# The length stays on each file as lsize, for the one place Windows itself goes by length: the Recycle Bin size check.
+_PLACEHOLDER = 0x1000 | 0x40000 | 0x400000  # OFFLINE, RECALL_ON_OPEN, RECALL_ON_DATA_ACCESS: data isn't on this PC
+_ALLOCATED = 0x200 | 0x800 | 0x400          # SPARSE_FILE, COMPRESSED, REPARSE_POINT (Windows compact, dedup, OneDrive)
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.GetCompressedFileSizeW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
+_k32.GetCompressedFileSizeW.restype = ctypes.c_ulong
+
+
+def disk_size(path, attrs, length):
+    """Bytes the file occupies on disk. path: long form. attrs: its st_file_attributes. A placeholder counts 0 and is
+    never opened (opening one can make OneDrive download it). Only sparse, compressed and other reparse-point
+    files need a call; for any other file the length is the size."""
+    if attrs & _PLACEHOLDER:
+        return 0
+    if attrs & _ALLOCATED:
+        hi = ctypes.c_ulong(0)
+        ctypes.set_last_error(0)
+        lo = _k32.GetCompressedFileSizeW(path, ctypes.byref(hi))
+        if lo == 0xFFFFFFFF and ctypes.get_last_error():
+            return length  # can't ask (access denied, a link Windows won't open): the length is the safe answer
+        return (hi.value << 32) | lo
+    return length
+
+
 # ---------------------------------------------------------------- tree
 class File:
-    __slots__ = ("name", "parent", "size", "mtime", "_row")
+    __slots__ = ("name", "parent", "size", "lsize", "mtime", "_row")
     is_dir = False
     nfiles, ndirs = 1, 0
 
-    def __init__(self, name, parent, size, mtime):
+    def __init__(self, name, parent, size, mtime, lsize=None):
+        # size: on disk (what is ranked and totalled). lsize: the file's length (Recycle Bin check only)
         self.name, self.parent, self.size, self.mtime, self._row = name, parent, size, mtime, 0
+        self.lsize = size if lsize is None else lsize
 
     @property
     def path(self):
@@ -129,14 +160,14 @@ class File:
 
 
 class Dir:
-    __slots__ = ("name", "path", "parent", "dirs", "files", "own", "own_mt", "size", "nfiles", "ndirs",
-                 "mtime", "denied", "skipped", "_row", "_kids")
+    __slots__ = ("name", "path", "parent", "dirs", "files", "own", "lown", "own_mt", "size", "lsize", "nfiles",
+                 "ndirs", "mtime", "denied", "skipped", "_row", "_kids")
     is_dir = True
 
     def __init__(self, name, path, parent, mtime=0):
         self.name, self.path, self.parent = name, path, parent
         self.dirs, self.files = [], []
-        self.own = self.size = self.nfiles = self.ndirs = 0
+        self.own = self.lown = self.size = self.lsize = self.nfiles = self.ndirs = 0
         self.own_mt = self.mtime = mtime
         self.denied = self.skipped = False
         self._row, self._kids = 0, None
@@ -150,14 +181,15 @@ def retotal(root):
         order.append(d)
         stack.extend(d.dirs)
     for d in reversed(order):
-        size, nf, nd, mt = d.own, len(d.files), len(d.dirs), d.own_mt
+        size, lsize, nf, nd, mt = d.own, d.lown, len(d.files), len(d.dirs), d.own_mt
         for c in d.dirs:
             size += c.size
+            lsize += c.lsize
             nf += c.nfiles
             nd += c.ndirs
             if c.mtime > mt:
                 mt = c.mtime
-        d.size, d.nfiles, d.ndirs, d.mtime = size, nf, nd, mt
+        d.size, d.lsize, d.nfiles, d.ndirs, d.mtime = size, lsize, nf, nd, mt
         d._kids = None
 
 
@@ -183,6 +215,8 @@ class Scanner(QObject):
         self.current = path
         self.t0 = self.t1 = 0
         self.n = threads
+        self.links = {}  # (volume, file id) -> the Files that are hard links to one file (only those with 2+ names)
+        self.links_lock = threading.Lock()
         self.go = threading.Event()  # cleared while the window has work to do: see Window.gui_busy
         self.go.set()
 
@@ -201,8 +235,22 @@ class Scanner(QObject):
         self.q.join()
         for _ in self.workers:
             self.q.put(None)
+        self._count_links_once()
         self.t1 = time.time()
         self.finished.emit(self)
+
+    def _count_links_once(self):
+        """Hard links are one file under several names: the first name by path keeps the size on disk, the others
+        count 0 (still listed, still counted as files). Decided here, once every name is known, so the result
+        doesn't depend on which scanner thread got there first."""
+        for files in self.links.values():
+            if len(files) > 1:
+                files.sort(key=lambda f: f.path)
+                for f in files[1:]:
+                    f.parent.own -= f.size
+                    self.bytes -= f.size
+                    f.size = 0
+        self.links = {}
 
     def _work(self):
         while True:
@@ -238,9 +286,23 @@ class Scanner(QObject):
                             self.q.put(sub)
                         else:
                             st = e.stat(follow_symlinks=False)
-                            d.files.append(File(e.name, d, st.st_size, st.st_mtime))
-                            d.own += st.st_size  # kept current so a live refresh shows the size so far
-                            own += st.st_size
+                            attrs, length, link = st.st_file_attributes, st.st_size, None
+                            size = disk_size(e.path, attrs, length)
+                            if not attrs & _PLACEHOLDER:  # (a placeholder is never opened, not even for this)
+                                try:  # the directory listing has no link count: one cheap attribute open per file
+                                    s2 = os.stat(e.path, follow_symlinks=False)
+                                    if s2.st_nlink > 1:
+                                        link = (s2.st_dev, s2.st_ino)
+                                except OSError:
+                                    pass
+                            f = File(e.name, d, size, st.st_mtime, length)
+                            d.files.append(f)
+                            if link is not None:
+                                with self.links_lock:
+                                    self.links.setdefault(link, []).append(f)
+                            d.own += size  # kept current so a live refresh shows the size so far
+                            d.lown += length
+                            own += size
                             nf += 1
                             if st.st_mtime > d.own_mt:
                                 d.own_mt = st.st_mtime
@@ -254,7 +316,7 @@ class Scanner(QObject):
 
 
 # ---------------------------------------------------------------- model
-COLS = ["Name", "Size", "% of drive", "Files", "Folders", "Modified"]
+COLS = ["Name", "Size on disk", "% of drive", "Files", "Folders", "Modified"]
 C_NAME, C_SIZE, C_PCT, C_FILES, C_DIRS, C_MOD = range(6)
 
 
@@ -616,7 +678,7 @@ class TreeMap(QWidget):
             self.setToolTip("")
             return
         extra = f"\n{it.nfiles:,} files" if it.is_dir else f"\n{cat_of(it.name)[0]}"
-        self.setToolTip(f"{it.path}\n{human(it.size)}{extra}")
+        self.setToolTip(f"{it.path}\n{human(it.size)} on disk{extra}")
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -696,7 +758,7 @@ class Window(QMainWindow):
         self.tree.header().setSectionsMovable(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(C_NAME, QHeaderView.Stretch)
-        for c, w in ((C_SIZE, 85), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
+        for c, w in ((C_SIZE, 136), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
             self.tree.setColumnWidth(c, w)
         self.tree.setItemDelegateForColumn(C_PCT, BarDelegate(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -738,13 +800,13 @@ class Window(QMainWindow):
         self.tabs.addTab(mapw, "Map")
 
         self.types = QTableWidget(0, 5)
-        self.types.setHorizontalHeaderLabels(["Type", "Extension", "Size", "% of drive", "Files"])
+        self.types.setHorizontalHeaderLabels(["Type", "Extension", "Size on disk", "% of drive", "Files"])
         self.setup_table(self.types)
         self.types.setItemDelegateForColumn(3, BarDelegate(self.types))
         self.tabs.addTab(self.types, "Types")
 
         self.top = QTableWidget(0, 4)
-        self.top.setHorizontalHeaderLabels(["Name", "Size", "Folder", "Modified"])
+        self.top.setHorizontalHeaderLabels(["Name", "Size on disk", "Folder", "Modified"])
         self.setup_table(self.top)
         self.top.setContextMenuPolicy(Qt.CustomContextMenu)
         self.top.customContextMenuRequested.connect(self.top_menu)
@@ -1026,7 +1088,7 @@ class Window(QMainWindow):
         self.btn_scan.setEnabled(True)
         r = s.root
         msg = (f"{'Stopped' if s.stopped else 'Scanned'} {r.path}  ·  {r.nfiles:,} files  ·  {r.ndirs:,} folders  ·  "
-               f"{human(r.size)}  ·  {s.t1 - s.t0:.1f}s")
+               f"{human(r.size)} on disk  ·  {s.t1 - s.t0:.1f}s")
         if s.denied:
             msg += f"  ·  {s.denied:,} folders access denied (run as admin to count them)"
         self.status.setText(msg)
@@ -1061,7 +1123,7 @@ class Window(QMainWindow):
         if d is None:
             self.crumb.setText("")
             return
-        rest = f"  ·  {human(d.size)}  ·  {d.nfiles:,} files"
+        rest = f"  ·  {human(d.size)} on disk  ·  {d.nfiles:,} files"
         bold = QFont(self.crumb.font())
         bold.setBold(True)
         room = max(120, self.crumb.width() - self.crumb.fontMetrics().horizontalAdvance(rest) - 12)
@@ -1231,7 +1293,7 @@ class Window(QMainWindow):
                 bad.append((i, "Windows would act on a different file or device"))
             elif self._has_skipped(i):  # its real size is unknown, so the Recycle Bin size check can't be made
                 bad.append((i, "its size isn't known because the scan was stopped; rescan it first"))
-            elif why := recycle_refusal(i.path, i.size, batch):
+            elif why := recycle_refusal(i.path, i.lsize, batch):  # by length: that is what Windows compares
                 bad.append((i, why))
         if bad:
             refused = {id(b) for b, _ in bad}
@@ -1260,6 +1322,7 @@ class Window(QMainWindow):
             else:
                 p.files.remove(it)
                 p.own -= it.size
+                p.lown -= it.lsize
             if self.focus is it or self._inside(self.focus, it):
                 self.focus = p
         cur = self.tree.currentIndex()
