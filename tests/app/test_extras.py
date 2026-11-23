@@ -703,3 +703,28 @@ def test_older_bin_contents_do_not_block_a_new_delete(window, work, dialogs):
     recycle_one(window, new, dialogs)  # second Delete: fits on its own, so it is not refused
     assert len(dialogs.texts) == n + 1 and window.status.text() == "Sent 1 to the Recycle Bin", window.status.text()
     assert h.in_bin(new) and not os.path.exists(new)
+
+
+
+# ---------------------------------------------------------------- the style is set once (a second setStyle crashes)
+def test_the_style_is_set_once_and_the_stylesheet_once_per_apply(qapp, monkeypatch):
+    import suite_style
+    from PySide6.QtWidgets import QApplication
+    calls = {"style": 0, "sheet": 0}
+    real_style, real_sheet = QApplication.setStyle, QApplication.setStyleSheet
+
+    def set_style(self, *a):                        # (a static method, called on the app)
+        calls["style"] += 1
+        return real_style(*a)
+
+    def set_sheet(self, *a):
+        calls["sheet"] += 1
+        return real_sheet(self, *a)
+    qapp.setStyleSheet("")                          # (no stylesheet style wrapping the one about to be replaced)
+    QApplication.setStyle("Windows")                # start from another style, as a fresh app does
+    monkeypatch.setattr(QApplication, "setStyle", set_style)
+    monkeypatch.setattr(QApplication, "setStyleSheet", set_sheet)
+    monkeypatch.setattr(suite_style, "_fusion_for", None, raising=False)
+    bf.apply_theme(qapp)
+    bf.apply_theme(qapp)
+    assert calls == {"style": 1, "sheet": 2}        # Fusion once; one stylesheet per apply
