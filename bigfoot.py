@@ -145,14 +145,16 @@ def disk_size(path, attrs, length):
 
 # ---------------------------------------------------------------- tree
 class File:
-    __slots__ = ("name", "parent", "size", "lsize", "mtime", "_row")
+    __slots__ = ("name", "parent", "size", "lsize", "mtime", "_row", "link")
     is_dir = False
     nfiles, ndirs = 1, 0
 
     def __init__(self, name, parent, size, mtime, lsize=None):
-        # size: on disk (what is ranked and totalled). lsize: the file's length (Recycle Bin check only)
+        # size: on disk (what is ranked and totalled). lsize: the file's length (Recycle Bin check only).
+        # link: the list of Files (sorted by path) that are hard links to one file, or None for a file with one name
         self.name, self.parent, self.size, self.mtime, self._row = name, parent, size, mtime, 0
         self.lsize = size if lsize is None else lsize
+        self.link = None
 
     @property
     def path(self):
@@ -215,8 +217,9 @@ class Scanner(QObject):
         self.current = path
         self.t0 = self.t1 = 0
         self.n = threads
-        self.links = {}  # (volume, file id) -> the Files that are hard links to one file (only those with 2+ names)
+        self.links = {}  # while scanning: (volume, file id) -> the Files that are hard links to one file
         self.links_lock = threading.Lock()
+        self.groups = []  # after the scan: the lists of 2+ names for one file (File.link points at its list)
         self.go = threading.Event()  # cleared while the window has work to do: see Window.gui_busy
         self.go.set()
 
@@ -246,6 +249,9 @@ class Scanner(QObject):
         for files in self.links.values():
             if len(files) > 1:
                 files.sort(key=lambda f: f.path)
+                self.groups.append(files)
+                for f in files:
+                    f.link = files  # kept: recycling the name that holds the size hands it to the next name
                 for f in files[1:]:
                     f.parent.own -= f.size
                     self.bytes -= f.size
@@ -288,7 +294,7 @@ class Scanner(QObject):
                             st = e.stat(follow_symlinks=False)
                             attrs, length, link = st.st_file_attributes, st.st_size, None
                             size = disk_size(e.path, attrs, length)
-                            if not attrs & _PLACEHOLDER:  # (a placeholder is never opened, not even for this)
+                            if length and not attrs & _PLACEHOLDER:  # (a placeholder is never opened, not even for this)
                                 try:  # the directory listing has no link count: one cheap attribute open per file
                                     s2 = os.stat(e.path, follow_symlinks=False)
                                     if s2.st_nlink > 1:
@@ -1020,7 +1026,7 @@ class Window(QMainWindow):
         cur = s.current
         if len(cur) > 90:
             cur = cur[:40] + "…" + cur[-45:]
-        self.status.setText(f"Scanning…  {s.files:,} files  ·  {s.dirs:,} folders  ·  {human(s.bytes)}  ·  "
+        self.status.setText(f"Scanning…  {s.files:,} files  ·  {s.dirs:,} folders  ·  {human(s.bytes)} on disk  ·  "
                             f"{el:.0f}s   {cur}")
 
     def snapshot_view(self):
@@ -1262,7 +1268,7 @@ class Window(QMainWindow):
                 m.addAction("Scan only this folder", lambda: self.busy() or (self.path.setText(one.path), self.scan()))
         m.addAction("Copy path" + ("s" if len(items) > 1 else ""), lambda: self.copy_paths(items))
         m.addSeparator()
-        total = sum(i.size for i in items)
+        total = self.freed(items)
         m.addAction(f"Send to Recycle Bin ({human(total)})", lambda: self.trash(items))
         m.exec(gpos)
         m.deleteLater()
@@ -1302,7 +1308,7 @@ class Window(QMainWindow):
             self.status.setText(f"Can't recycle {many}: {bad[0][1]}. Use Explorer for these.")
             if not items:
                 return
-        total = sum(i.size for i in items)
+        total = self.freed(items)
         names = "\n".join(i.path for i in items[:8]) + ("\n…" if len(items) > 8 else "")
         skipped = f"\n\n{len(bad)} other item{'s' if len(bad) > 1 else ''} can't be recycled: see the status bar."
         if QMessageBox.question(self, "Send to Recycle Bin",
@@ -1311,11 +1317,13 @@ class Window(QMainWindow):
             return
         failed = []
         for it in items:
+            files = self._files_under(it) if self.scanner and self.scanner.groups else []  # (before it leaves the tree)
             r = QFile.moveToTrash(it.path)
             ok = r[0] if isinstance(r, tuple) else bool(r)
             if not ok:
                 failed.append(it.path)
                 continue
+            self._release_links(files)
             p = it.parent
             if it.is_dir:
                 p.dirs.remove(it)
@@ -1335,6 +1343,42 @@ class Window(QMainWindow):
         self.status.setText(f"Sent {len(items) - len(failed)} to the Recycle Bin" +
                             (f"  ·  couldn't move: {', '.join(failed[:3])}" if failed else "") +
                             (f"  ·  skipped {len(bad)} (first {bad[0][0].name!r}; use Explorer)" if bad else ""))
+
+    @staticmethod
+    def _files_under(it):
+        return list(walk_files(it)) if it.is_dir else [it]
+
+    @staticmethod
+    def _release_links(files):
+        """Names recycled that were hard links: the one that held the size hands it to the next name still there
+        (by path), because that data stays on disk and has to stay in the totals."""
+        for f in files:
+            g = f.link
+            if g is None:
+                continue
+            g.remove(f)
+            f.link = None
+            if f.size and g:
+                g[0].size += f.size
+                g[0].parent.own += f.size
+
+    def freed(self, items):
+        """What recycling items gives back: their size on disk, less hard-linked data that stays because another
+        name for it isn't among them."""
+        total = sum(i.size for i in items)
+        ids = {id(i) for i in items}
+
+        def inside(f):
+            while f is not None:
+                if id(f) in ids:
+                    return True
+                f = f.parent
+            return False
+        for g in (self.scanner.groups if self.scanner else ()):
+            owner = next((f for f in g if f.size), None)
+            if owner is not None and inside(owner) and not all(inside(f) for f in g):
+                total -= owner.size
+        return total
 
     DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
                *(f"{p}{n}" for p in ("COM", "LPT") for n in "0123456789¹²³")}

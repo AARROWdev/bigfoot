@@ -449,7 +449,7 @@ def test_hard_links_streams_attributes_compressed_sparse(window, work):
     subprocess.run(["compact", "/c", os.path.join(work, "comp.txt")], capture_output=True)
     h.sparse(os.path.join(work, "sparse.img"), 1 << 33)
     root = h.scan(window, work)
-    # Rules (2026-11-24): sizes are what the files occupy on disk. A hard link is one file (counted once), alternate
+    # Rules (2026-11-23): sizes are what the files occupy on disk. A hard link is one file (counted once), alternate
     # data streams aren't counted, a compressed file counts what it takes compressed, a sparse file what it holds.
     # The length of every name is kept apart (lsize) for the Recycle Bin check.
     assert root.lsize == 10_000 * 2 + 1 + 11 + 13 + 200_000 + (1 << 33)
@@ -458,7 +458,7 @@ def test_hard_links_streams_attributes_compressed_sparse(window, work):
     assert root.nfiles == 7
 
 
-# Size on disk (Aaron, 2026-11-24: C: showed 1.3 TB on a 455 GB drive, and a folder of 4,377 sparse placeholder
+# Size on disk (2026-11-23: C: showed 1.3 TB on a 455 GB drive, and a folder of 4,377 sparse placeholder
 # files that take 0 bytes was the biggest thing on it). Each of these failed on the code that added up lengths.
 def test_sparse_file_counts_what_it_holds_not_its_length(window, work):
     vm = os.path.join(work, "vm.img")
@@ -510,6 +510,84 @@ def test_cloud_placeholder_counts_zero_and_is_never_opened(window, work, monkeyp
     assert not any("cloud.bin" in o for o in opened), "a placeholder must not be opened (that can download it)"
     assert any("local.bin" in o for o in opened)  # (the spy sees the other files)
     check_against_truth(root, work)
+
+
+@pytest.mark.parametrize("attr", [0x1000, 0x40000, 0x400000])  # OFFLINE, RECALL_ON_OPEN, RECALL_ON_DATA_ACCESS
+def test_every_placeholder_attribute_counts_zero_without_asking_windows(attr, monkeypatch):
+    # (only OFFLINE can be set on a real file, so the other two are checked on the sizing function itself)
+    monkeypatch.setattr(bf._k32, "GetCompressedFileSizeW", lambda *a: pytest.fail("a placeholder must not be opened"))
+    assert bf.disk_size(r"\\?\C:\does\not\exist", attr | 0x200 | 0x400, 5 << 30) == 0  # even sparse + reparse too
+
+
+def _recycle_stubs(monkeypatch):
+    """Recycle by deleting for real (no Recycle Bin on a test run), say yes, and record the dialog text."""
+    asked = []
+    monkeypatch.setattr(bf, "recycle_refusal", lambda *a, **k: None)
+
+    class FakeFile:
+        @staticmethod
+        def moveToTrash(p):
+            if os.path.isdir(bf.long_path(p)):
+                import shutil
+                shutil.rmtree(bf.long_path(p))
+            else:
+                os.remove(bf.long_path(p))
+            return True
+    monkeypatch.setattr(bf, "QFile", FakeFile)
+    monkeypatch.setattr(bf.QMessageBox, "question", lambda self, title, text, *a: (asked.append(text), bf.QMessageBox.Yes)[1])
+    return asked
+
+
+def test_recycling_the_hard_link_that_holds_the_size_keeps_the_data_in_the_totals(window, work, monkeypatch):
+    asked = _recycle_stubs(monkeypatch)
+    h.make_tree(work, {"a": {"orig.bin": 10_000}, "b": {}, "c": {}})
+    first = os.path.join(work, "a", "orig.bin")
+    l1, l2 = os.path.join(work, "b", "l1.bin"), os.path.join(work, "c", "l2.bin")
+    os.link(first, l1)
+    os.link(first, l2)
+    root = h.scan(window, work)
+    assert [h.find_dir(root, p).size for p in (first, l1, l2)] == [10_000, 0, 0]
+    # the name that holds the size goes: the data stays on disk under the other two, so it stays in the totals
+    window.trash([h.find_dir(root, first)])
+    assert "(0 B)" in asked[-1] and "9.8 KB" not in asked[-1]  # nothing would be given back
+    assert os.path.exists(l1) and not os.path.exists(first)
+    assert h.find_dir(root, l1).size == 10_000 and h.find_dir(root, l2).size == 0
+    assert root.size == 10_000 and h.find_dir(root, os.path.join(work, "a")).size == 0
+    assert h.find_dir(root, os.path.join(work, "b")).size == 10_000
+    # then the next one: the size moves again
+    window.trash([h.find_dir(root, l1)])
+    assert h.find_dir(root, l2).size == 10_000 and root.size == 10_000
+    # the last name: now it is really gone
+    window.trash([h.find_dir(root, l2)])
+    assert root.size == 0 and root.nfiles == 0
+
+
+def test_recycling_every_name_gives_the_size_back_and_a_folder_hands_its_links_on(window, work, monkeypatch):
+    asked = _recycle_stubs(monkeypatch)
+    h.make_tree(work, {"a": {"orig.bin": 10_000}, "b": {"l1.bin": 1}, "keep": {}})
+    first = os.path.join(work, "a", "orig.bin")
+    os.link(first, os.path.join(work, "b", "l2.bin"))
+    os.link(first, os.path.join(work, "keep", "l3.bin"))
+    root = h.scan(window, work)
+    assert root.size == 10_001
+    both = [h.find_dir(root, os.path.join(work, "a")), h.find_dir(root, os.path.join(work, "b"))]
+    window.trash(both)  # a and b: two of the three names, the third (keep\l3.bin) stays
+    assert "9.8 KB" not in asked[-1] and "1 B" in asked[-1]  # only b\l1.bin's byte comes back
+    keep = h.find_dir(root, os.path.join(work, "keep", "l3.bin"))
+    assert keep.size == 10_000 and root.size == 10_000
+    window.trash([h.find_dir(root, os.path.join(work, "keep"))])
+    assert "9.8 KB" in asked[-1]  # now every name is in the selection: all of it comes back
+    assert root.size == 0
+
+
+def test_every_hard_link_name_in_the_selection_counts_in_the_dialog(window, work, monkeypatch):
+    asked = _recycle_stubs(monkeypatch)
+    h.make_tree(work, {"a": {"orig.bin": 10_000}})
+    os.link(os.path.join(work, "a", "orig.bin"), os.path.join(work, "a", "second.bin"))
+    root = h.scan(window, work)
+    window.trash([h.find_dir(root, os.path.join(work, "a", "orig.bin")), h.find_dir(root, os.path.join(work, "a", "second.bin"))])
+    assert "(9.8 KB)" in asked[-1]
+    assert root.size == 0
 
 
 def test_a_total_never_exceeds_the_used_space_of_its_volume(window, work):
