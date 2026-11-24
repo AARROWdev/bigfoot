@@ -3,7 +3,7 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
-      <img alt="Bigfoot. Find what's eating your disk. A disk space analyzer for Windows: a treemap of every folder, a plain list view, the real size on disk, and it never deletes a file for good while saying it was recycled." src="docs/hero-dark.svg" width="100%">
+      <img alt="Bigfoot. Find what's eating your disk. A disk space analyzer for Windows: a treemap of every folder, a plain list view, the real size on disk, and it only ever sends files to the Recycle Bin, refusing anything Windows would delete for good." src="docs/hero-dark.svg" width="100%">
     </picture>
   </a>
 </p>
@@ -12,7 +12,7 @@
 
 **Download: [latest release](https://github.com/AARROWdev/bigfoot/releases/latest)** (Windows 10/11, 64-bit)
 
-Find what's eating your disk. Bigfoot is a disk space analyzer for Windows that shows where your space goes at a glance: a treemap of every folder, a plain list view, real size on disk, and it never deletes a file for good.
+Find what's eating your disk. Bigfoot is a disk space analyzer for Windows that shows where your space goes at a glance: a treemap of every folder, a plain list view, real size on disk, and it only ever sends files to the Recycle Bin, refusing anything Windows would delete for good.
 
 Point it at a drive or folder and it shows where the space went: a biggest-first tree, a treemap, a breakdown by file type and the 100 biggest files. Select what you don't need and send it to the Recycle Bin; the totals update on the spot.
 
