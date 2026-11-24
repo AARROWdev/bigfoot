@@ -408,16 +408,31 @@ def recycle_bin_entries(drive="C:"):
     for n in os.listdir(d):
         if not n.startswith("$I"):
             continue
-        with open(os.path.join(d, n), "rb") as f:
-            b = f.read()
-        ver, size = struct.unpack_from("<qq", b, 0)
-        if ver == 2:
-            ln = struct.unpack_from("<i", b, 24)[0]
-            orig = b[28:28 + ln * 2].decode("utf-16-le", "surrogatepass").rstrip("\0")
-        else:
-            orig = b[24:24 + 520].decode("utf-16-le", "surrogatepass").split("\0")[0]
-        out.append((orig, size, os.path.join(d, "$R" + n[2:]), os.path.join(d, n)))
+        rec = _read_record(os.path.join(d, n))
+        if rec is not None:
+            orig, size = rec
+            out.append((orig, size, os.path.join(d, "$R" + n[2:]), os.path.join(d, n)))
     return out
+
+
+def _read_record(path):
+    """(original path, size) of one $I record, or None for one Windows is still writing or has just removed.
+    A reader that polls the bin while Windows recycles runs into those (PermissionError mid-write, a record that
+    isn't complete yet): look again for a moment, then leave that one out of this reading."""
+    for _ in range(20):
+        try:
+            with open(path, "rb") as f:
+                b = f.read()
+            ver, size = struct.unpack_from("<qq", b, 0)
+            if ver == 2:
+                ln = struct.unpack_from("<i", b, 24)[0]
+                return b[28:28 + ln * 2].decode("utf-16-le", "surrogatepass").rstrip("\0"), size
+            return b[24:24 + 520].decode("utf-16-le", "surrogatepass").split("\0")[0], size
+        except FileNotFoundError:
+            return None
+        except (OSError, struct.error):
+            time.sleep(0.025)
+    return None
 
 
 def in_bin(path):
