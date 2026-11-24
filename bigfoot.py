@@ -842,11 +842,14 @@ def fit_top_columns(t, mod_col, vw=None):
     if vw is None:
         vw = top_width(t)
     mod = max(t.sizeHintForColumn(3), mod_col)  # (not columnWidth: the last column was stretched)
-    # the Name column is capped at 45% of the table, and gives up more if the Folder column's 120 px minimum would
-    # otherwise push the table wider than it is (a narrow panel): never sideways to find the date
-    t.setColumnWidth(0, max(80, min(t.columnWidth(0), int(vw * 0.45), vw - t.columnWidth(1) - mod - 120)))
-    room = vw - t.columnWidth(0) - t.columnWidth(1) - mod
-    t.setColumnWidth(2, max(120, min(t.columnWidth(2), 420, room)))
+    # The Name column is capped at 45% of the table and gives up more if the Folder column's minimum (at most 120 px,
+    # less if its paths are shorter) would push the table wider than it is, but never goes below 80 px (or below its
+    # own content if that is narrower). Down to about 80 + Size + date + 120 px the columns add up to the table.
+    f_min = min(t.columnWidth(2), 120)
+    cw0, cw1, cw2 = t.columnWidth(0), t.columnWidth(1), t.columnWidth(2)
+    t.setColumnWidth(0, max(min(cw0, 80), min(cw0, int(vw * 0.45), vw - cw1 - mod - f_min)))
+    room = vw - t.columnWidth(0) - cw1 - mod
+    t.setColumnWidth(2, max(f_min, min(cw2, 420, room)))
     t.setColumnWidth(3, mod)
 
 

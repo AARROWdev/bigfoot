@@ -212,6 +212,39 @@ def test_the_top_100_columns_never_add_up_to_more_than_the_table_with_long_names
     assert w[2] >= 120 and w[0] >= 80
 
 
+def _top_table(window, work):
+    h.make_tree(work, {"a.bin": 300, "b.bin": 200, "c.bin": 100})
+    h.scan(window, work)
+    window.tabs.setCurrentIndex(2)
+    h.pump(100)
+    return window.top
+
+
+def test_the_name_column_is_never_widened_beyond_its_content(window, work):
+    t = _top_table(window, work)
+    for own in (40, 60, 79, 300):  # (a narrower name than the 80 px floor included)
+        for vw in (900, 640):
+            t.setColumnWidth(0, own)
+            t.setColumnWidth(1, 100)
+            t.setColumnWidth(2, 200)
+            bf.fit_top_columns(t, window.mod_col, vw=vw)
+            assert t.columnWidth(0) <= own, (own, vw, t.columnWidth(0))
+
+
+def test_short_folder_paths_leave_the_room_to_the_names_in_a_narrow_table(window, work):
+    t = _top_table(window, work)
+    mod = max(t.sizeHintForColumn(3), window.mod_col)
+    size, folder = 100, 50  # short folder paths (like C:\x): they need 50 px, less than the 120 minimum
+    vw = size + mod + folder + 130  # a table in which a 600 px file name has to give way to 130
+    t.setColumnWidth(0, 600)
+    t.setColumnWidth(1, size)
+    t.setColumnWidth(2, folder)
+    bf.fit_top_columns(t, window.mod_col, vw=vw)
+    w = [t.columnWidth(c) for c in range(3)]
+    assert sum(w) + mod <= vw, (w, mod, vw)  # nothing to scroll sideways to
+    assert w[2] == folder  # the short paths are whole, and the Folder column is not padded to 120
+    assert abs(w[0] - 130) <= 1, w  # the name has all the room that is left
+
 def test_a_long_top_100_table_has_no_sideways_scroll_either(window, work):
     h.make_tree(work, {f"file_number_{i:03d}.bin": 1000 + i for i in range(120)})
     h.scan(window, work)
