@@ -305,16 +305,18 @@ print("done", flush=True)
                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     assert p.stdout.readline().strip() == "go"
     deadline = time.time() + 60
-    while len(h.recycle_bin_entries()) < 100 and time.time() < deadline:
+    while len(h.recycle_bin_entries(poll=True)) < 100 and time.time() < deadline:  # (Windows is writing records)
         time.sleep(0.05)
     p.kill()
     p.wait()
-    binned = {os.path.relpath(e[0], work): e for e in h.recycle_bin_entries()}
+    # the kill can land while Windows writes a record, leaving it cut short for good: that one is an orphan below
+    binned = {os.path.relpath(e[0], work): e for e in h.recycle_bin_entries(poll=True)}
     assert 0 < len(binned) < 400, len(binned)
     now = h.tree_hash(work)
     # Windows moves the file, then writes its $I record: a kill in between leaves the data in the bin
     # folder without a record (intact, but not listed in the Recycle Bin window). Documented, not lost.
     orphans = h.recycle_bin_orphans()
+    h.remove_broken_records()  # (their data is in orphans; the strict readers below must not trip over them)
     for rel in before:
         if rel not in now and rel not in binned:
             assert before[rel] in orphans, f"{rel} lost: not on disk, not in the Recycle Bin"

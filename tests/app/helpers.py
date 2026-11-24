@@ -399,8 +399,11 @@ def my_sid():
     return out.strip().split(",")[-1].strip('"')
 
 
-def recycle_bin_entries(drive="C:"):
-    """[(original_path, size, $R path)] from the current user's Recycle Bin on a drive ($I file format v1/v2)."""
+def recycle_bin_entries(drive="C:", poll=False):
+    """[(original_path, size, $R path, $I path)] from the current user's Recycle Bin on a drive ($I file format
+    v1/v2). poll=True is for a reader that runs while Windows is recycling, or after a process was killed in the
+    middle of it: a record that stays unreadable is then left out. Otherwise it raises, so a stray record in the
+    bin can never make an "is the bin empty" check pass."""
     d = os.path.join(drive + "\\", "$Recycle.Bin", my_sid())
     out = []
     if not os.path.isdir(d):
@@ -408,31 +411,62 @@ def recycle_bin_entries(drive="C:"):
     for n in os.listdir(d):
         if not n.startswith("$I"):
             continue
-        rec = _read_record(os.path.join(d, n))
+        rec = _read_record(os.path.join(d, n), poll)
         if rec is not None:
             orig, size = rec
             out.append((orig, size, os.path.join(d, "$R" + n[2:]), os.path.join(d, n)))
     return out
 
 
-def _read_record(path):
-    """(original path, size) of one $I record, or None for one Windows is still writing or has just removed.
-    A reader that polls the bin while Windows recycles runs into those (PermissionError mid-write, a record that
-    isn't complete yet): look again for a moment, then leave that one out of this reading."""
+def _parse_record(b):
+    """(original path, size) from the bytes of a $I record; ValueError if it is not a complete one."""
+    if len(b) < 24:
+        raise ValueError("record cut short")
+    ver, size = struct.unpack_from("<qq", b, 0)
+    if ver == 2:
+        if len(b) < 28:
+            raise ValueError("record cut short")
+        ln = struct.unpack_from("<i", b, 24)[0]
+        if ln <= 0 or len(b) < 28 + ln * 2:
+            raise ValueError("name cut short")
+        return b[28:28 + ln * 2].decode("utf-16-le", "surrogatepass").rstrip("\0"), size  # (odd lengths can't happen)
+    if ver == 1:
+        if len(b) < 24 + 520:
+            raise ValueError("record cut short")
+        return b[24:24 + 520].decode("utf-16-le", "surrogatepass").split("\0")[0], size
+    raise ValueError(f"not a record (version {ver})")
+
+
+def _read_record(path, poll=False):
+    """(original path, size) of one $I record, or None when it is gone (FileNotFoundError). One that is locked or
+    not complete yet (Windows writing it) is looked at again for half a second; if it is still unreadable it raises,
+    or with poll=True is left out (None)."""
+    err = None
     for _ in range(20):
         try:
             with open(path, "rb") as f:
                 b = f.read()
-            ver, size = struct.unpack_from("<qq", b, 0)
-            if ver == 2:
-                ln = struct.unpack_from("<i", b, 24)[0]
-                return b[28:28 + ln * 2].decode("utf-16-le", "surrogatepass").rstrip("\0"), size
-            return b[24:24 + 520].decode("utf-16-le", "surrogatepass").split("\0")[0], size
+            return _parse_record(b)
         except FileNotFoundError:
             return None
-        except (OSError, struct.error):
+        except (OSError, ValueError, struct.error) as e:  # (UnicodeDecodeError is a ValueError)
+            err = e
             time.sleep(0.025)
-    return None
+    if poll:
+        return None
+    raise err
+
+
+def remove_broken_records(drive="C:"):
+    """Deletes $I records that aren't complete (left by a process killed while Windows wrote them), so the strict
+    readers of the next test don't trip over them."""
+    d = os.path.join(drive + "\\", "$Recycle.Bin", my_sid())
+    for n in os.listdir(d) if os.path.isdir(d) else ():
+        if n.startswith("$I") and _read_record(os.path.join(d, n), poll=True) is None:
+            try:
+                os.remove(os.path.join(d, n))
+            except OSError:
+                pass
 
 
 def in_bin(path):
@@ -474,14 +508,17 @@ def make_vhd(path, size_mb):
     return path
 
 def recycle_bin_orphans(drive="C:"):
-    """$R files with no $I record (a recycle interrupted mid-way): {sha1: $R path}."""
+    """$R files with no usable $I record (a recycle interrupted mid-way: the $I is missing, or cut short because
+    the process was killed while Windows wrote it): {sha1: $R path}."""
     d = os.path.join(drive + os.sep, "$Recycle.Bin", my_sid())
     if not os.path.isdir(d):
         return {}
     names = set(os.listdir(d))
     out = {}
     for n in names:
-        if n.startswith("$R") and "$I" + n[2:] not in names and os.path.isfile(os.path.join(d, n)):
+        if not n.startswith("$R") or not os.path.isfile(os.path.join(d, n)):
+            continue
+        if "$I" + n[2:] not in names or _read_record(os.path.join(d, "$I" + n[2:]), poll=True) is None:
             with open(os.path.join(d, n), "rb") as f:
                 out[hashlib.sha1(f.read()).hexdigest()] = os.path.join(d, n)
     return out
