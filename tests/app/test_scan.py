@@ -63,8 +63,11 @@ def test_a_saved_narrow_size_column_is_widened_for_its_new_header(make_window):
 
 
 def test_the_demo_tool_stops_on_a_drive_that_does_not_exist(tmp_path):
-    import string
-    free = [c for c in string.ascii_uppercase if not os.path.exists(c + ":\\")]
+    import ctypes
+    mask = ctypes.windll.kernel32.GetLogicalDrives()  # (no probing of drives that might stall)
+    free = [chr(65 + i) for i in range(26) if not mask >> i & 1]
+    if not free:
+        pytest.skip("every drive letter is in use")
     tool = os.path.join(bf.os.path.dirname(os.path.abspath(bf.__file__)), "tools", "make_demo.py")
     r = subprocess.run([sys.executable, tool, free[-1] + ":\\Demo"], capture_output=True, text=True, timeout=30)
     assert r.returncode != 0 and "no such drive" in (r.stdout + r.stderr)

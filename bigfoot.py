@@ -13,14 +13,16 @@ import traceback
 import winreg
 import suite_style
 
-from PySide6.QtCore import (QAbstractEventDispatcher, QAbstractItemModel, QByteArray, QEvent, QItemSelectionModel,
-                            QModelIndex, QObject, QPointF, QRectF, QSettings, QSize, QStorageInfo, Qt, QTimer, Signal)
+from PySide6.QtCore import (QAbstractEventDispatcher, QAbstractItemModel, QAbstractTableModel, QByteArray, QEvent,
+                            QItemSelectionModel, QModelIndex, QObject, QPointF, QRectF, QSettings, QSize, QStorageInfo,
+                            Qt, QTimer, Signal)
 from PySide6.QtGui import (QAction, QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QKeySequence,
                            QLinearGradient, QPainter, QPalette, QPen, QPixmap, QShortcut)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFileIconProvider,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QComboBox, QFileDialog, QFileIconProvider,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-                               QProgressBar, QPushButton, QSizePolicy, QSplitter, QStyle, QStyledItemDelegate, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QToolButton, QTreeView, QVBoxLayout, QWidget)
+                               QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QStyle,
+                               QStyledItemDelegate, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QToolButton,
+                               QTreeView, QVBoxLayout, QWidget)
 from PySide6.QtCore import QFile
 
 APP = "Bigfoot"
@@ -483,6 +485,113 @@ class TreeModel(QAbstractItemModel):
         self.layoutChanged.emit()
 
 
+# ---------------------------------------------------------------- list (the other view of a folder, in the Map tab)
+LIST_COLS = ["Name", "Size on disk", "% of folder", "Type", "Modified"]
+L_NAME, L_SIZE, L_PCT, L_TYPE, L_MOD = range(5)
+
+
+def kind_of(it):
+    if it.is_dir:
+        return "Folder"
+    e = ext_of(it.name)
+    return f"{e.upper()} file" if e else "File"
+
+
+def folder_total(d):
+    """What a folder's contents are shares of: its size, or what its contents add up to if that is more. The boxes
+    draw their areas by it (see TreeMap._draw) and the list's "% of folder" is by it, so they agree."""
+    return max(d.size, sum(k.size for k in (*d.dirs, *d.files)))
+
+
+class ListModel(QAbstractTableModel):
+    """The direct contents of one folder, folders and files together, in the order the user chose."""
+
+    def __init__(self, icons):
+        super().__init__()
+        self.dir, self.items, self.total, self.sig = None, [], 0, None
+        self.sort_col, self.desc = L_SIZE, True  # kept while the user moves between folders
+        self.ic_dir, self.ic_file = icons
+
+    def _key(self):
+        c = self.sort_col
+        if c == L_NAME:
+            return lambda x: x.name.lower()
+        if c in (L_SIZE, L_PCT):
+            return lambda x: (x.size, x.name.lower())
+        if c == L_TYPE:
+            return lambda x: (kind_of(x).lower(), x.name.lower())
+        return lambda x: (x.mtime, x.name.lower())
+
+    def load(self, d):
+        """Show d's contents. Returns False and changes nothing when that is exactly what is shown already (a live
+        refresh that found nothing new must not redraw the list)."""
+        items = [*d.dirs, *d.files] if d is not None else []
+        sig = (id(d), d.size if d is not None else 0, tuple((id(x), x.size, x.mtime) for x in items))
+        if sig == self.sig:
+            return False
+        items.sort(key=self._key(), reverse=self.desc)
+        self.beginResetModel()
+        self.dir, self.items, self.sig = d, items, sig
+        self.total = folder_total(d) if d is not None else 0
+        self.endResetModel()
+        return True
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.items)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(LIST_COLS)
+
+    def headerData(self, s, o, role=Qt.DisplayRole):
+        if o == Qt.Horizontal and role == Qt.DisplayRole:
+            return LIST_COLS[s]
+        if o == Qt.Horizontal and role == Qt.TextAlignmentRole and s in (L_SIZE, L_PCT):
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+
+    def data(self, idx, role=Qt.DisplayRole):
+        if not idx.isValid() or not 0 <= idx.row() < len(self.items):
+            return None
+        it, c = self.items[idx.row()], idx.column()
+        if role == Qt.DisplayRole:
+            if c == L_NAME:
+                return it.name
+            if c == L_SIZE:
+                return human(it.size)
+            if c == L_PCT:
+                return f"{it.size / self.total * 100:.1f} %" if self.total else "0.0 %"
+            if c == L_TYPE:
+                return kind_of(it)
+            if c == L_MOD:
+                return fdate(it.mtime)
+        elif role == Qt.DecorationRole and c == L_NAME:
+            return self.ic_dir if it.is_dir else self.ic_file
+        elif role == Qt.TextAlignmentRole and c in (L_SIZE, L_PCT):
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        elif role == Qt.ForegroundRole:
+            if it.is_dir and (it.denied or it.skipped):
+                return QColor("#ff8a8a")
+            if c in (L_TYPE, L_MOD):
+                return QColor("#9aa0aa")
+        elif role == Qt.ToolTipRole and c == L_NAME:
+            tip = it.path
+            if it.is_dir and it.denied:
+                tip += "\n(access denied: some contents not counted)"
+            if it.is_dir and it.skipped:
+                tip += "\n(not scanned: the scan was stopped)"
+            return tip
+        return None
+
+    def sort(self, col, order=Qt.DescendingOrder):
+        self.layoutAboutToBeChanged.emit()
+        old = self.persistentIndexList()
+        keep = [(self.items[i.row()], i.column()) for i in old]
+        self.sort_col, self.desc = col, order == Qt.DescendingOrder
+        self.items.sort(key=self._key(), reverse=self.desc)
+        pos = {id(x): r for r, x in enumerate(self.items)}
+        self.changePersistentIndexList(old, [self.index(pos[id(it)], c) for it, c in keep])
+        self.layoutChanged.emit()
+
+
 class BarDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, color=ACCENT):
         super().__init__(parent)
@@ -626,7 +735,7 @@ class TreeMap(QWidget):
                             Qt.AlignLeft | Qt.AlignVCenter, self.fm.elidedText(label, Qt.ElideRight, int(r.width() - 8)))
                 inner = r.adjusted(2, self.HEAD + 1, -2, -2)
             kids = sorted((k for k in (*list(it.dirs), *list(it.files)) if k.size > 0), key=lambda k: k.size, reverse=True)
-            total = max(it.size, sum(k.size for k in kids))
+            total = folder_total(it)  # (the list's "% of folder" is by the same number)
             area = inner.width() * inner.height()
             if area <= 0 or not kids or total <= 0:
                 return
@@ -792,18 +901,65 @@ class Window(QMainWindow):
         self.crumb.installEventFilter(self)  # re-elide whenever the crumb itself is resized
         crumb.addWidget(self.btn_up)
         crumb.addWidget(self.crumb, 1)
+        # Boxes | List: two views of the selected folder
+        self.view_boxes = QToolButton()
+        self.view_boxes.setText("Boxes")
+        self.view_list = QToolButton()
+        self.view_list.setText("List")
+        grp = QButtonGroup(self)
+        seg = QHBoxLayout()
+        seg.setSpacing(0)
+        for b in (self.view_boxes, self.view_list):
+            b.setCheckable(True)
+            b.setAutoRaise(False)
+            grp.addButton(b)
+            seg.addWidget(b)
+        self.view_grp = grp
+        self.view_boxes.setChecked(True)
+        crumb.addLayout(seg)
         ml.addLayout(crumb)
+        self.view_stack = QStackedWidget()
+        boxes = QWidget()
+        bl = QVBoxLayout(boxes)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(4)
         self.map = TreeMap()
         self.map.picked.connect(self.map_picked)
         self.map.zoom.connect(self.set_focus)
-        ml.addWidget(self.map, 1)
+        bl.addWidget(self.map, 1)
         legend = QHBoxLayout()
         legend.setContentsMargins(6, 0, 6, 4)
         for name, col, _ in CATS + [(OTHER[0], OTHER[1], "")]:
             lab = QLabel(f"<span style='color:{col}'>■</span> {name}")
             legend.addWidget(lab)
         legend.addStretch(1)
-        ml.addLayout(legend)
+        bl.addLayout(legend)
+        self.view_stack.addWidget(boxes)
+        self.list_model = ListModel((self.model.ic_dir, self.model.ic_file))
+        self.listv = QTableView()
+        self.listv.setModel(self.list_model)
+        self.listv.verticalHeader().hide()
+        self.listv.verticalHeader().setDefaultSectionSize(22)
+        self.listv.setShowGrid(False)
+        self.listv.setAlternatingRowColors(True)
+        self.listv.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.listv.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.listv.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.listv.setWordWrap(False)
+        lh = self.listv.horizontalHeader()
+        lh.setSortIndicator(L_SIZE, Qt.DescendingOrder)
+        self.listv.setSortingEnabled(True)
+        lh.setStretchLastSection(False)
+        lh.setSectionResizeMode(L_NAME, QHeaderView.Stretch)
+        for c, w in ((L_SIZE, self.size_col), (L_PCT, 100), (L_TYPE, 100), (L_MOD, 120)):
+            self.listv.setColumnWidth(c, w)
+        self.listv.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.listv.customContextMenuRequested.connect(
+            lambda p: self.menu(self.listv.viewport().mapToGlobal(p), self.list_items()))
+        self.listv.activated.connect(self.list_activated)  # double-click and Enter
+        self.view_stack.addWidget(self.listv)
+        ml.addWidget(self.view_stack, 1)
+        self.view_list.toggled.connect(self.view_changed)
         self.tabs.addTab(mapw, "Map")
 
         self.types = QTableWidget(0, 5)
@@ -851,7 +1007,10 @@ class Window(QMainWindow):
 
         QShortcut(QKeySequence.Delete, self.tree, lambda: self.trash(self.selected_items())).setContext(
             Qt.WidgetWithChildrenShortcut)
+        QShortcut(QKeySequence.Delete, self.listv, lambda: self.trash(self.list_items())).setContext(
+            Qt.WidgetWithChildrenShortcut)
         self.tree.installEventFilter(self)  # Ctrl+C: see eventFilter
+        self.listv.installEventFilter(self)
         QShortcut(QKeySequence("F5"), self, self.scan)
         QShortcut(QKeySequence("Ctrl+L"), self, lambda: (self.path.setFocus(), self.path.selectAll()))
         QShortcut(QKeySequence("Backspace"), self.map, self.map_up).setContext(Qt.WidgetShortcut)
@@ -871,6 +1030,8 @@ class Window(QMainWindow):
             # than the "Size on disk" header needs
             hd = self.tree.header()
             hd.resizeSection(C_SIZE, max(hd.sectionSize(C_SIZE), self.size_col))
+        if self.settings.value("view") == "list":  # the view chosen last time
+            self.view_list.setChecked(True)
 
         if start:
             self.path.setText(start)
@@ -899,6 +1060,9 @@ class Window(QMainWindow):
             return True
         if obj is getattr(self, "tree", None) and e.type() == QEvent.KeyPress and e.matches(QKeySequence.Copy):
             self.copy_paths(self.selected_items())  # full paths; never Qt's own copy of just the current row's name
+            return True
+        if obj is getattr(self, "listv", None) and e.type() == QEvent.KeyPress and e.matches(QKeySequence.Copy):
+            self.copy_paths(self.list_items())
             return True
         if obj is getattr(self, "crumb", None) and e.type() == QEvent.Resize:
             self.update_crumb()
@@ -995,6 +1159,7 @@ class Window(QMainWindow):
             tbl.clearSelection()
             tbl.setRowCount(0)
         self.map.sel, self.map.hits = None, []
+        self.list_model.load(None)  # no rows of the old scan while the new one starts
         self.model.set_root(self.scanner.root)
         self.tree.expand(self.model.index_for(self.scanner.root))
         self.set_focus(self.scanner.root)
@@ -1070,6 +1235,7 @@ class Window(QMainWindow):
         self.map_pick = False
         self.map.invalidate()
         self.update_crumb()
+        self.refresh_list()
 
     def live_refresh(self):
         if self.scanner and not self.scanner.t1:
@@ -1127,7 +1293,56 @@ class Window(QMainWindow):
         self.focus = d
         self.map.set_focus(d)
         self.update_crumb()
+        self.refresh_list()
         self.refresh_tables()
+
+    # ---------- the list view of the selected folder (the other half of Boxes | List)
+    def view_changed(self, on):
+        self.view_stack.setCurrentIndex(1 if on else 0)
+        self.settings.setValue("view", "list" if on else "boxes")
+        self.refresh_list()
+
+    def list_items(self):
+        m = self.list_model
+        return [m.items[i.row()] for i in self.listv.selectionModel().selectedRows(0) if i.row() < len(m.items)]
+
+    def list_activated(self, idx):
+        if not 0 <= idx.row() < len(self.list_model.items):
+            return
+        it = self.list_model.items[idx.row()]
+        if it.is_dir:  # opens in the list, and the left tree follows
+            self.select_in_tree(it)
+            self.set_focus(it)
+        else:
+            self.open_item(it)
+
+    def refresh_list(self):
+        """Fill the list with the focused folder. A refresh that finds nothing new leaves it alone (no redraw), and
+        one that does keeps the selection, the current row and the scroll position."""
+        if not self.view_list.isChecked():
+            return
+        lv, m = self.listv, self.list_model
+        d = self.focus
+        same = m.dir is d
+        keep, cur = [], None
+        if same:
+            keep = self.list_items()
+            ci = lv.currentIndex()
+            cur = m.items[ci.row()] if ci.isValid() and ci.row() < len(m.items) else None
+        scroll = lv.verticalScrollBar().value()
+        if not m.load(d):
+            return
+        if not same:
+            lv.scrollToTop()
+            return
+        pos = {id(x): r for r, x in enumerate(m.items)}
+        sm = lv.selectionModel()
+        for it in keep:
+            if id(it) in pos:
+                sm.select(m.index(pos[id(it)], 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+        if cur is not None and id(cur) in pos:
+            sm.setCurrentIndex(m.index(pos[id(cur)], 0), QItemSelectionModel.NoUpdate)
+        lv.verticalScrollBar().setValue(scroll)
 
     def update_crumb(self):
         d = self.focus

@@ -33,6 +33,7 @@ The app isn't code-signed yet, so Windows may show "Windows protected your PC": 
 - **Fast scan** of any drive, folder or network share: multi-threaded, live progress, and the tree fills in while it scans
 - **Biggest-first tree:** size on disk, % of drive bar, files, folders, newest modified date. Click any column to sort.
 - **Map:** a squarified treemap of the selected folder, colored by file type. Click to find it in the tree, double-click a folder to zoom in, right-click or Up to zoom out.
+- **Boxes | List:** the switch above the map shows the selected folder as boxes or as a list (name, size on disk, % of the folder, type, modified; folders and files together, biggest first, click a header to sort). Double-click a folder to open it, a file to open it with its app; right-click gives the same menu as everywhere else. Bigfoot remembers which one you used.
 - **Types:** space by extension and category (video, audio, images, archives, disk images, programs, documents, code)
 - **Top 100 files** under the selected folder
 - **Actions:** open, show in Explorer, copy path, scan only this folder, send to Recycle Bin
