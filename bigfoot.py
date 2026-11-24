@@ -824,6 +824,22 @@ class TreeMap(QWidget):
             self.zoom.emit(d)
 
 
+def fit_top_columns(t, mod_col, vw=None):
+    """Column widths of the Top 100 table, after resizeColumnsToContents: the Folder column takes what is left once
+    Modified has room for a whole date (never cut at "16:..."); a very long file name can't push the rest out; the
+    width of the vertical scrollbar of a long table is kept free. vw: the width to fit (default: the table's own)."""
+    if vw is None:
+        vw = t.viewport().width()
+        if (not t.verticalScrollBar().isVisible() and  # (a long table is about to get one)
+                t.rowCount() * t.verticalHeader().defaultSectionSize() > t.viewport().height()):
+            vw -= t.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, t)
+    t.setColumnWidth(0, min(t.columnWidth(0), int(vw * 0.45)))
+    mod = max(t.sizeHintForColumn(3), mod_col)  # (not columnWidth: the last column was stretched)
+    room = vw - t.columnWidth(0) - t.columnWidth(1) - mod
+    t.setColumnWidth(2, max(120, min(t.columnWidth(2), 420, room)))
+    t.setColumnWidth(3, mod)
+
+
 # ---------------------------------------------------------------- window
 class Window(QMainWindow):
     def __init__(self, start=None):
@@ -1474,15 +1490,7 @@ class Window(QMainWindow):
             t.setSortingEnabled(True)
             t.sortItems(1, Qt.DescendingOrder)
             t.resizeColumnsToContents()
-            # the Folder column takes what is left once Modified has room for a whole date (never cut at "16:...")
-            vw = t.viewport().width()
-            if not t.verticalScrollBar().isVisible():  # (a long table is about to get one: keep its width free)
-                vw -= t.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, t)
-            t.setColumnWidth(0, min(t.columnWidth(0), int(vw * 0.45)))  # (a very long file name must not push the rest out)
-            mod = max(t.columnWidth(3), self.mod_col)
-            room = vw - t.columnWidth(0) - t.columnWidth(1) - mod
-            t.setColumnWidth(2, max(120, min(t.columnWidth(2), 420, room)))
-            t.setColumnWidth(3, mod)
+            fit_top_columns(t, self.mod_col)
 
     def top_menu(self, pos):
         rows = sorted({i.row() for i in self.top.selectedIndexes()})

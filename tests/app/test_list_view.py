@@ -147,6 +147,30 @@ def test_the_top_100_table_shows_a_whole_modified_date(window, work):
     widths = [t.columnWidth(c) for c in range(4)]
     assert t.horizontalScrollBar().maximum() == 0, (widths, sum(widths), t.viewport().width())  # nothing sideways
 
+def test_the_top_100_table_gives_the_folder_column_all_it_needs_when_it_just_fits(window, work):
+    h.make_tree(os.path.join(work, "Games", "Open World RPG", "data"), {f"pak{i:02d}.pak": 5000 - i for i in range(6)})
+    h.make_tree(os.path.join(work, "Projects", "ml-model", "checkpoints"), {"epoch_0000.ckpt": 100})
+    h.scan(window, work)
+    window.tabs.setCurrentIndex(2)
+    h.pump(150)
+    t = window.top
+    t.resizeColumnsToContents()  # what the four columns need (Modified: a whole date, not what stretching gave it)
+    h.pump(80)  # (the last column stretches to fill the table)
+    n, s = t.columnWidth(0), t.columnWidth(1)
+    f = min(t.sizeHintForColumn(2), 420)
+    m = max(t.sizeHintForColumn(3), window.mod_col)
+    tight = n + s + f + m + 2  # a table that is just wide enough for all four
+    t.setColumnWidth(3, 400)  # what stretching the last column gives it (the width must not be read as the need)
+    bf.fit_top_columns(t, window.mod_col, vw=tight)
+    assert t.columnWidth(0) == n
+    assert t.columnWidth(2) >= f - 1, (t.columnWidth(2), f)  # no folder path is cut
+    # a little narrower: the Folder column gives way (by exactly what is missing), and Modified keeps its date
+    t.resizeColumnsToContents()
+    h.pump(80)
+    t.setColumnWidth(3, 400)
+    bf.fit_top_columns(t, window.mod_col, vw=tight - 40)
+    assert abs(t.columnWidth(2) - (f - 38)) <= 3, (t.columnWidth(2), f)
+
 def test_a_long_top_100_table_has_no_sideways_scroll_either(window, work):
     h.make_tree(work, {f"file_number_{i:03d}.bin": 1000 + i for i in range(120)})
     h.scan(window, work)

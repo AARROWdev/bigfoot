@@ -42,8 +42,9 @@ def main():
         bf.apply_theme(app)
         w = bf.Window()
         w.setAttribute(Qt.WA_DontShowOnScreen, True)
-        w.resize(1440, 860)
+        w.resize(1560, 860)
         w.show()
+        w.split.setSizes([680, 880])  # the panel with the map, list and tables gets the room those need
         w.path.setText(demo)
         w.scan()
         if w.scanner is None:
