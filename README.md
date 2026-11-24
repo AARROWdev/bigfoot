@@ -3,7 +3,7 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
-      <img alt="Bigfoot. Find what's eating your disk. A disk space analyzer for Windows: a treemap of every folder, a plain list view, the real size on disk, and it only ever sends files to the Recycle Bin, refusing anything Windows would delete for good." src="docs/hero-dark.svg" width="100%">
+      <img alt="Bigfoot. Find what's eating your disk. A disk space analyzer for Windows: a treemap of every folder, a plain list view, the real size on disk, and it only ever sends files to the Recycle Bin, refusing any file Windows would delete for good instead of recycling." src="docs/hero-dark.svg" width="100%">
     </picture>
   </a>
 </p>
@@ -12,7 +12,7 @@
 
 **Download: [latest release](https://github.com/AARROWdev/bigfoot/releases/latest)** (Windows 10/11, 64-bit)
 
-Find what's eating your disk. Bigfoot is a disk space analyzer for Windows that shows where your space goes at a glance: a treemap of every folder, a plain list view, real size on disk, and it only ever sends files to the Recycle Bin, refusing anything Windows would delete for good.
+Find what's eating your disk. Bigfoot is a disk space analyzer for Windows that shows where your space goes at a glance: a treemap of every folder, a plain list view, real size on disk, and it only ever sends files to the Recycle Bin, refusing any file Windows would delete for good instead of recycling.
 
 Point it at a drive or folder and it shows where the space went: a biggest-first tree, a treemap, a breakdown by file type and the 100 biggest files. Select what you don't need and send it to the Recycle Bin; the totals update on the spot.
 
@@ -68,6 +68,8 @@ A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTra
 - **Too big for the bin:** each item is checked against the drive's bin size (its `MaxCapacity` setting, or the Windows default of 5% if it was never changed), lowered to the `RecycleBinSize` Group Policy when that is smaller. A selection too big for the bin *together* is refused too, because Windows would otherwise purge the items it recycled seconds earlier.
 - **Size not known:** a folder only partly scanned because you pressed Stop
 - **Names Windows can't recycle:** trailing dots or spaces, unpaired surrogates, device names like `CON`, `NUL.txt`, `COM1`
+
+Like Explorer, Windows empties the bin's oldest items for good when a recycle fills it up. Bigfoot protects what you are sending, not what is already in the bin.
 
 ## Tested in a throwaway Windows
 `tests/` holds 500 automated tests that run inside a fresh Windows Sandbox (495 of them; the other 5 are skipped there: 3 need a virtual disk, which the Sandbox can't mount, and 2 check the headless test setting, which the Sandbox doesn't use), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against an independent walk of the tree, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
