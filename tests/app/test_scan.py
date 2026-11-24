@@ -2,6 +2,7 @@
 import os
 import random
 import subprocess
+import sys
 import threading
 import time
 
@@ -32,9 +33,41 @@ def test_the_ui_tests_run_headless_off_the_sandbox(qapp):
     """On a real PC the window tests must not show a window (conftest sets QT_QPA_PLATFORM=offscreen)."""
     if h.IN_SANDBOX:
         pytest.skip("in the Sandbox the real platform is used (nobody's screen is at risk there)")
-    if os.environ.get("QT_QPA_PLATFORM") not in (None, "offscreen"):
+    if os.environ.get("QT_QPA_PLATFORM") not in (None, "", "offscreen"):
         pytest.skip("QT_QPA_PLATFORM was set to look at the windows on purpose")
     assert qapp.platformName() == "offscreen"
+
+
+def test_an_empty_platform_variable_still_runs_headless(tmp_path):
+    """QT_QPA_PLATFORM="" must not let Qt pick the real platform (windows on the PC owner's screen)."""
+    if h.IN_SANDBOX:
+        pytest.skip("not used in the Sandbox")
+    env = dict(os.environ, QT_QPA_PLATFORM="")
+    me = os.path.abspath(__file__)
+    r = subprocess.run([sys.executable, "-m", "pytest", me, "-q", "-p", "no:cacheprovider", f"--basetemp={tmp_path / 'sub'}",
+                        "-k", "ui_tests_run_headless", "-rs"], env=env, capture_output=True, text=True, timeout=120)
+    assert "1 passed" in r.stdout and "skipped" not in r.stdout, r.stdout[-600:]
+
+
+def test_a_saved_narrow_size_column_is_widened_for_its_new_header(make_window):
+    w1 = make_window()
+    need = w1.size_col
+    assert w1.tree.header().sectionSize(bf.C_SIZE) >= need
+    w1.tree.header().resizeSection(bf.C_SIZE, 85)  # the width older versions saved
+    w1.settings.setValue("header2", w1.tree.header().saveState())
+    w2 = make_window()
+    assert w2.tree.header().sectionSize(bf.C_SIZE) >= need  # never narrower than the "Size on disk" header
+    w2.tree.header().resizeSection(bf.C_SIZE, need + 60)  # a wider one the user chose is kept
+    w2.settings.setValue("header2", w2.tree.header().saveState())
+    assert make_window().tree.header().sectionSize(bf.C_SIZE) == need + 60
+
+
+def test_the_demo_tool_stops_on_a_drive_that_does_not_exist(tmp_path):
+    import string
+    free = [c for c in string.ascii_uppercase if not os.path.exists(c + ":\\")]
+    tool = os.path.join(bf.os.path.dirname(os.path.abspath(bf.__file__)), "tools", "make_demo.py")
+    r = subprocess.run([sys.executable, tool, free[-1] + ":\\Demo"], capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0 and "no such drive" in (r.stdout + r.stderr)
 
 
 # 6

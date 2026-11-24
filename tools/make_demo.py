@@ -114,7 +114,10 @@ def main():
         raise SystemExit(f"{a.folder} already exists: choose a new folder")
     parent = os.path.dirname(os.path.abspath(a.folder))
     while not os.path.isdir(parent):  # (the free space of the drive the folder will be made on)
-        parent = os.path.dirname(parent)
+        up = os.path.dirname(parent)
+        if up == parent:  # reached the top of a drive or share that doesn't exist
+            raise SystemExit(f"no such drive or folder: {a.folder}")
+        parent = up
     need = int(planned_bytes(LAYOUT, a.scale) * 1.5)  # the sizes vary a little around the plan
     free = shutil.disk_usage(parent).free
     if free < need:

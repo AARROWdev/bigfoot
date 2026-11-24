@@ -764,8 +764,8 @@ class Window(QMainWindow):
         self.tree.header().setSectionsMovable(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(C_NAME, QHeaderView.Stretch)
-        fm = self.tree.header().fontMetrics()
-        for c, w in ((C_SIZE, fm.horizontalAdvance(COLS[C_SIZE]) + 44), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
+        self.size_col = self.tree.header().fontMetrics().horizontalAdvance(COLS[C_SIZE]) + 44  # (room for the arrow)
+        for c, w in ((C_SIZE, self.size_col), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
             self.tree.setColumnWidth(c, w)
         self.tree.setItemDelegateForColumn(C_PCT, BarDelegate(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -867,6 +867,10 @@ class Window(QMainWindow):
             self.split.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
         if state("header2"):
             self.tree.header().restoreState(state("header2"))
+            # a state saved by an older version has the Size column at its old, narrower width: never narrower
+            # than the "Size on disk" header needs
+            hd = self.tree.header()
+            hd.resizeSection(C_SIZE, max(hd.sectionSize(C_SIZE), self.size_col))
 
         if start:
             self.path.setText(start)

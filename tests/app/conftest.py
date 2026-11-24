@@ -25,8 +25,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 # Tests never show windows, take the mouse or the keyboard on a PC somebody is using: off the Sandbox the UI tests
 # run headless. This has to be set before Qt starts. (QT_QPA_PLATFORM=windows in the environment overrides it,
 # for looking at a test on purpose.) In the Sandbox nobody's screen is at risk and the real platform is used.
-if os.environ.get("USERNAME", "").upper() != "WDAGUTILITYACCOUNT":
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if os.environ.get("USERNAME", "").upper() != "WDAGUTILITYACCOUNT" and not os.environ.get("QT_QPA_PLATFORM"):
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"  # (an empty value counts as not set: Qt would use the real platform)
 
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402

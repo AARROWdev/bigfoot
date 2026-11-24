@@ -54,6 +54,10 @@ def main():
                 break
         else:
             w.scanner.stop()
+            for _ in range(100):  # let the scanner threads finish before the window and settings go
+                pump(app, 0.1)
+                if w.scanner.t1:
+                    break
             raise SystemExit("the scan didn't finish")
         pump(app, 0.5)
         out = os.path.join(ROOT, "docs")
