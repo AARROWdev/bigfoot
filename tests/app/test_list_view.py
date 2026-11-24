@@ -133,6 +133,31 @@ def test_a_saved_narrow_modified_column_is_widened_to_a_whole_date(make_window):
     assert make_window().tree.columnWidth(bf.C_MOD) == need + 50
 
 
+def test_the_top_100_table_shows_a_whole_modified_date(window, work):
+    deep = os.path.join(work, "a_long_folder_name_for_the_projects_" * 2, "and_another_long_one_below_it" * 2)
+    h.make_tree(deep, {"quite_a_long_file_name_for_a_big_video_file.mov": 5000, "x.bin": 100})
+    h.scan(window, work)
+    window.tabs.setCurrentIndex(2)
+    h.pump(100)
+    t = window.top
+    assert t.rowCount() == 2
+    date = bf.fdate(1700000000)
+    # the Modified column starts early enough for a whole date to fit inside the table's viewport
+    assert t.columnViewportPosition(3) + t.fontMetrics().horizontalAdvance(date) <= t.viewport().width()
+    widths = [t.columnWidth(c) for c in range(4)]
+    assert t.horizontalScrollBar().maximum() == 0, (widths, sum(widths), t.viewport().width())  # nothing sideways
+
+def test_a_long_top_100_table_has_no_sideways_scroll_either(window, work):
+    h.make_tree(work, {f"file_number_{i:03d}.bin": 1000 + i for i in range(120)})
+    h.scan(window, work)
+    window.tabs.setCurrentIndex(2)
+    h.pump(150)
+    t = window.top
+    assert t.rowCount() == 100 and t.verticalScrollBar().isVisible()
+    assert t.horizontalScrollBar().maximum() == 0
+    assert t.columnViewportPosition(3) + t.fontMetrics().horizontalAdvance(bf.fdate(1700000000)) <= t.viewport().width()
+
+
 def test_default_sort_is_size_descending_and_folders_are_not_forced_first(listed):
     w, _ = listed
     assert names(w) == ["z.bin", "mid", "a.bin", "tiny"]

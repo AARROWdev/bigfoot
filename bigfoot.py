@@ -1474,7 +1474,15 @@ class Window(QMainWindow):
             t.setSortingEnabled(True)
             t.sortItems(1, Qt.DescendingOrder)
             t.resizeColumnsToContents()
-            t.setColumnWidth(2, min(t.columnWidth(2), 420))
+            # the Folder column takes what is left once Modified has room for a whole date (never cut at "16:...")
+            vw = t.viewport().width()
+            if not t.verticalScrollBar().isVisible():  # (a long table is about to get one: keep its width free)
+                vw -= t.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, t)
+            t.setColumnWidth(0, min(t.columnWidth(0), int(vw * 0.45)))  # (a very long file name must not push the rest out)
+            mod = max(t.columnWidth(3), self.mod_col)
+            room = vw - t.columnWidth(0) - t.columnWidth(1) - mod
+            t.setColumnWidth(2, max(120, min(t.columnWidth(2), 420, room)))
+            t.setColumnWidth(3, mod)
 
     def top_menu(self, pos):
         rows = sorted({i.row() for i in self.top.selectedIndexes()})

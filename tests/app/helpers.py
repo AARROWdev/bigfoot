@@ -489,6 +489,7 @@ def restore(path):
 def empty_bin():
     subprocess.run(["powershell", "-NoProfile", "-Command", "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"],
                    capture_output=True)
+    remove_broken_records()  # (a cut-short record left by a killed test must not trip the next test's strict reads)
 
 
 def make_vhd(path, size_mb):
