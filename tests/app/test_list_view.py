@@ -120,6 +120,19 @@ def test_headers_sit_over_their_columns_and_a_date_fits(listed):
     assert w.tree.columnWidth(bf.C_MOD) >= w.tree.fontMetrics().horizontalAdvance(date)  # not cut at "16:..."
 
 
+def test_a_saved_narrow_modified_column_is_widened_to_a_whole_date(make_window):
+    w1 = make_window()
+    need = w1.mod_col
+    assert w1.tree.columnWidth(bf.C_MOD) >= need
+    w1.tree.header().resizeSection(bf.C_MOD, 120)  # the width 1.2 saved ("2026-10-24 16:...")
+    w1.settings.setValue("header2", w1.tree.header().saveState())
+    w2 = make_window()
+    assert w2.tree.columnWidth(bf.C_MOD) >= need
+    w2.tree.header().resizeSection(bf.C_MOD, need + 50)  # a wider one the user chose is kept
+    w2.settings.setValue("header2", w2.tree.header().saveState())
+    assert make_window().tree.columnWidth(bf.C_MOD) == need + 50
+
+
 def test_default_sort_is_size_descending_and_folders_are_not_forced_first(listed):
     w, _ = listed
     assert names(w) == ["z.bin", "mid", "a.bin", "tiny"]

@@ -1038,6 +1038,7 @@ class Window(QMainWindow):
             # than the "Size on disk" header needs
             hd = self.tree.header()
             hd.resizeSection(C_SIZE, max(hd.sectionSize(C_SIZE), self.size_col))
+            hd.resizeSection(C_MOD, max(hd.sectionSize(C_MOD), self.mod_col))  # (and a whole date and time)
         if self.settings.value("view") == "list":  # the view chosen last time
             self.view_list.setChecked(True)
 
