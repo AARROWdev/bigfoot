@@ -58,7 +58,7 @@ Bigfoot ranks and totals the space a file occupies on the drive, not the length 
 - **Cloud placeholders** (OneDrive "online-only" files) count 0 and are never opened, so a scan can't make them download.
 - **Hard links** (the same file under several names, as in WinSxS) count once. The first name by path takes the size; the other names are listed with 0.
 
-The columns say "Size on disk". The one place Bigfoot goes by a file's length is the Recycle Bin check below, because that is what Windows compares with the bin's size. Telling hard links apart takes one attribute lookup per file (never a read), which adds some scan time on a drive with millions of files (see the numbers below).
+The columns say "Size on disk". The one place Bigfoot goes by a file's length is the Recycle Bin check below, because that is what Windows compares with the bin's size. Telling hard links apart takes one attribute lookup per file (never a read), which adds scan time on a drive with millions of files (the whole-C: row below includes it).
 
 ## The part worth reading: delete means recycle
 A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTrash` (like the shell call underneath it) will quietly delete a file permanently and still report success when the Recycle Bin can't take it. Bigfoot checks before it sends anything, and refuses with a reason instead:
@@ -70,13 +70,13 @@ A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTra
 - **Names Windows can't recycle:** trailing dots or spaces, unpaired surrogates, device names like `CON`, `NUL.txt`, `COM1`
 
 ## Tested in a throwaway Windows
-`tests/` holds 500 automated tests that run inside a fresh Windows Sandbox (495 of them; the other 5 are skipped there: 3 need a virtual disk, which the Sandbox can't mount, and 2 check the headless test setting, which the Sandbox doesn't use), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
+`tests/` holds 500 automated tests that run inside a fresh Windows Sandbox (495 of them; the other 5 are skipped there: 3 need a virtual disk, which the Sandbox can't mount, and 2 check the headless test setting, which the Sandbox doesn't use), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against an independent walk of the tree, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
 
-Release bar: all 495 pass **3 full runs in a row** on the release code. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
+Release bar: all 495 pass **3 full runs in a row** on the release code. Getting there found 11 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
 
 | Measured in the Sandbox | |
 |---|---|
-| 1,000,000 files | 17 to 20 s, +13 MB |
+| 1,000,000 empty files | 17 to 20 s |
 | The whole C: drive | 72 to 258 s (3 runs: 72, 258, 74) |
 | Worst window freeze during a big scan | under 0.4 s |
 
@@ -91,7 +91,7 @@ winget install JRSoftware.InnoSetup   # installer compiler
 Settings live in the registry (`HKCU\Software\Bigfoot`); `error.log` is in `%LOCALAPPDATA%\Bigfoot\`.
 
 ## How it was built
-Python and PySide6 (Qt 6), one 1,500-line file. Built with [Claude Code](https://claude.com/claude-code): a written spec of what must work and what counts as a bug, a separate AI reviewer session checking every change against it until zero findings, and the Sandbox suite above as the release gate.
+Python and PySide6 (Qt 6), one 1,770-line file. Built with [Claude Code](https://claude.com/claude-code): a written spec of what must work and what counts as a bug, a separate AI reviewer session checking every change against it until zero findings, and the Sandbox suite above as the release gate.
 
 ## License
 [MIT](LICENSE)
