@@ -195,6 +195,23 @@ def test_after_a_refill_the_width_comes_from_the_rows_not_the_stale_scrollbar(wi
     assert t.rowCount() == 100 and bf.top_width(t) == long_width
 
 
+@pytest.mark.parametrize("vw", [900, 700, 640])
+def test_the_top_100_columns_never_add_up_to_more_than_the_table_with_long_names(window, work, vw):
+    deep = os.path.join(work, "a_long_folder_name_for_the_projects_" * 2, "and_another_long_one_below_it" * 2)
+    h.make_tree(deep, {"quite_a_long_file_name_for_a_big_video_file_with_a_long_name.mov": 5000, "x.bin": 100})
+    h.scan(window, work)
+    window.tabs.setCurrentIndex(2)
+    h.pump(100)
+    t = window.top
+    t.resizeColumnsToContents()
+    t.setColumnWidth(3, 400)  # (what stretching the last column gives it)
+    bf.fit_top_columns(t, window.mod_col, vw=vw)  # a table this wide (in the Sandbox's window it is 578)
+    w = [t.columnWidth(c) for c in range(3)]  # (the last column is stretched to fill the table: its need is m)
+    m = max(t.sizeHintForColumn(3), window.mod_col)
+    assert sum(w) + m <= vw, (w, m, vw)  # nothing to scroll sideways to
+    assert w[2] >= 120 and w[0] >= 80
+
+
 def test_a_long_top_100_table_has_no_sideways_scroll_either(window, work):
     h.make_tree(work, {f"file_number_{i:03d}.bin": 1000 + i for i in range(120)})
     h.scan(window, work)

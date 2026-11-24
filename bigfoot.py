@@ -841,8 +841,10 @@ def fit_top_columns(t, mod_col, vw=None):
     width of the vertical scrollbar of a long table is kept free. vw: the width to fit (default: top_width)."""
     if vw is None:
         vw = top_width(t)
-    t.setColumnWidth(0, min(t.columnWidth(0), int(vw * 0.45)))
     mod = max(t.sizeHintForColumn(3), mod_col)  # (not columnWidth: the last column was stretched)
+    # the Name column is capped at 45% of the table, and gives up more if the Folder column's 120 px minimum would
+    # otherwise push the table wider than it is (a narrow panel): never sideways to find the date
+    t.setColumnWidth(0, max(80, min(t.columnWidth(0), int(vw * 0.45), vw - t.columnWidth(1) - mod - 120)))
     room = vw - t.columnWidth(0) - t.columnWidth(1) - mod
     t.setColumnWidth(2, max(120, min(t.columnWidth(2), 420, room)))
     t.setColumnWidth(3, mod)
