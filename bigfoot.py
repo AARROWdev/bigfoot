@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 from PySide6.QtCore import QFile
 
 APP = "Bigfoot"
-VERSION = "1.2"
+VERSION = "1.2.1"
 ACCENT = "#2f9bff"
 
 # ---------------------------------------------------------------- file types

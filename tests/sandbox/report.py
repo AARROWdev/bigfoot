@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 PLAN = {  # plan test number -> (what, how to find its results)
     1: ("Silent install: files, Start Menu, Add/Remove Programs, launches", ["A1 "]),
     2: ("Wizard install with the desktop shortcut ticked", ["A2 "]),
-    3: ("Upgrade from 1.1, upgrade while Bigfoot runs", ["A3 "]),
+    3: ("Upgrade from 1.2, upgrade while Bigfoot runs", ["A3 "]),
     4: ("Uninstall: clean, settings kept, refused while running", ["A4 "]),
     5: ("Portable zip runs, nothing in Program Files", ["A5 "]),
     6: ("Totals match ground truth", ["test_totals_match_ground_truth"]),

@@ -8,14 +8,16 @@ param([string]$Pytest = '', [string]$K = '', [switch]$NoInstall, [switch]$Networ
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..\..").Path
 $py = (Get-Content "$root\.venv-test\pyvenv.cfg" | Where-Object { $_ -like 'home*' }) -replace '^home\s*=\s*', ''
-if (-not (Test-Path "$root\dist\BigfootSetup-*.exe")) { throw 'Run build.ps1 first' }
+$ver = [regex]::Match((Get-Content "$root\bigfoot.py" -Raw), 'VERSION = "([^"]+)"').Groups[1].Value
+if (-not $ver) { throw 'No VERSION in bigfoot.py' }
+if (-not (Test-Path "$root\dist\BigfootSetup-$ver.exe")) { throw "Run build.ps1 first: dist\BigfootSetup-$ver.exe is missing (a build of another version doesn't count)" }
 
-# An older setup (v1.1 code, same installer script) so the upgrade path is tested for real.
+# An older setup (v1.2 code, same installer script) so the upgrade path is tested for real.
 $old = "$root\build\old-setup"
-if (-not (Test-Path "$old\BigfootSetup-1.1.exe")) {
+if (-not (Test-Path "$old\BigfootSetup-1.2.exe")) {
     $src = "$root\build\old-src"
     if (Test-Path $src) { git -C $root worktree remove --force $src 2>$null; Remove-Item $src -Recurse -Force -ErrorAction SilentlyContinue }
-    git -C $root worktree add --detach $src v1.1 | Out-Null
+    git -C $root worktree add --detach $src v1.2 | Out-Null
     try {
         Push-Location $src
         & "$root\.venv\Scripts\python" -m PyInstaller --noconfirm --windowed --name Bigfoot --icon "$src\bigfoot.ico" `
@@ -27,7 +29,7 @@ if (-not (Test-Path "$old\BigfootSetup-1.1.exe")) {
         Copy-Item "$root\installer\bigfoot.iss" "$src\installer\bigfoot.iss" -Force
         $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
         if (-not $iscc) { $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
-        & $iscc /Q /DAppVersion=1.1 "/O$old" "$src\installer\bigfoot.iss"
+        & $iscc /Q /DAppVersion=1.2 "/O$old" "$src\installer\bigfoot.iss"
         if ($LASTEXITCODE) { throw "old setup build failed" }
     } finally {
         Set-Location $root
