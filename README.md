@@ -16,9 +16,9 @@ Point it at a drive or folder and it shows where the space went: a biggest-first
 
 ![Bigfoot treemap](docs/map.png)
 
-| Types | Top 100 files |
-|---|---|
-| ![Types](docs/types.png) | ![Top 100 files](docs/top.png) |
+| The same folder as a list | Types | Top 100 files |
+|---|---|---|
+| ![List](docs/list.png) | ![Types](docs/types.png) | ![Top 100 files](docs/top.png) |
 
 ## Download
 From the [latest release](https://github.com/AARROWdev/bigfoot/releases/latest):

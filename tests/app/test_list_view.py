@@ -108,6 +108,18 @@ def test_columns_and_icons(listed):
         assert not w.list_model.data(w.list_model.index(row_of(w, n), 0), Qt.DecorationRole).isNull()
 
 
+def test_headers_sit_over_their_columns_and_a_date_fits(listed):
+    w, root = listed
+    m = w.list_model
+    right = {bf.L_SIZE, bf.L_PCT}
+    for c in range(5):
+        a = m.headerData(c, Qt.Horizontal, Qt.TextAlignmentRole)
+        assert bool(a & Qt.AlignRight) == (c in right), c  # numbers right, text left (the Name header too)
+    date = bf.fdate(1700000000)
+    assert w.listv.columnWidth(bf.L_MOD) >= w.listv.fontMetrics().horizontalAdvance(date)
+    assert w.tree.columnWidth(bf.C_MOD) >= w.tree.fontMetrics().horizontalAdvance(date)  # not cut at "16:..."
+
+
 def test_default_sort_is_size_descending_and_folders_are_not_forced_first(listed):
     w, _ = listed
     assert names(w) == ["z.bin", "mid", "a.bin", "tiny"]

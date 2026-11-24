@@ -63,8 +63,14 @@ def main():
             raise SystemExit("the scan didn't finish")
         pump(app, 0.5)
         out = os.path.join(ROOT, "docs")
-        for tab, name in ((0, "map"), (1, "types"), (2, "top")):
+        for tab, name, as_list in ((0, "map", False), (0, "list", True), (1, "types", False), (2, "top", False)):
             w.tabs.setCurrentIndex(tab)
+            (w.view_list if as_list else w.view_boxes).setChecked(True)
+            if as_list:  # a folder with files and subfolders together
+                videos = next((d for d in w.scanner.root.dirs if d.name == "Videos"), None)
+                if videos is not None:
+                    w.select_in_tree(videos)
+                    w.set_focus(videos)
             pump(app, 0.4)
             w.grab().save(os.path.join(out, f"{name}.png"))
             print("wrote", os.path.join(out, f"{name}.png"))

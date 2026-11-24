@@ -552,8 +552,8 @@ class ListModel(QAbstractTableModel):
     def headerData(self, s, o, role=Qt.DisplayRole):
         if o == Qt.Horizontal and role == Qt.DisplayRole:
             return LIST_COLS[s]
-        if o == Qt.Horizontal and role == Qt.TextAlignmentRole and s in (L_SIZE, L_PCT):
-            return int(Qt.AlignRight | Qt.AlignVCenter)
+        if o == Qt.Horizontal and role == Qt.TextAlignmentRole:  # a header sits over its column's text
+            return int((Qt.AlignRight if s in (L_SIZE, L_PCT) else Qt.AlignLeft) | Qt.AlignVCenter)
 
     def data(self, idx, role=Qt.DisplayRole):
         if not idx.isValid() or not 0 <= idx.row() < len(self.items):
@@ -881,7 +881,8 @@ class Window(QMainWindow):
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(C_NAME, QHeaderView.Stretch)
         self.size_col = self.tree.header().fontMetrics().horizontalAdvance(COLS[C_SIZE]) + 44  # (room for the arrow)
-        for c, w in ((C_SIZE, self.size_col), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, 120)):
+        self.mod_col = self.tree.fontMetrics().horizontalAdvance(fdate(1700000000)) + 26  # (a whole date and time)
+        for c, w in ((C_SIZE, self.size_col), (C_PCT, 120), (C_FILES, 75), (C_DIRS, 65), (C_MOD, self.mod_col)):
             self.tree.setColumnWidth(c, w)
         self.tree.setItemDelegateForColumn(C_PCT, BarDelegate(self.tree))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -957,7 +958,8 @@ class Window(QMainWindow):
         self.listv.setSortingEnabled(True)
         lh.setStretchLastSection(False)
         lh.setSectionResizeMode(L_NAME, QHeaderView.Stretch)
-        for c, w in ((L_SIZE, self.size_col), (L_PCT, 100), (L_TYPE, 100), (L_MOD, 120)):
+        for c, w in ((L_SIZE, self.size_col), (L_PCT, 95), (L_TYPE, 80),
+                     (L_MOD, self.mod_col)):
             self.listv.setColumnWidth(c, w)
         self.listv.setContextMenuPolicy(Qt.CustomContextMenu)
         self.listv.customContextMenuRequested.connect(
