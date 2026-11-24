@@ -824,15 +824,23 @@ class TreeMap(QWidget):
             self.zoom.emit(d)
 
 
+def top_width(t):
+    """The width the Top 100 table's columns can use: its inner width, less the vertical scrollbar if the rows
+    will overflow. Worked out from the rows, not from the scrollbar or viewport as they are right now: after a
+    refill (100 rows, then 3) Qt hasn't hidden or shown the scrollbar yet, and its viewport is still the old one."""
+    inner = t.contentsRect()
+    head = t.horizontalHeader().height() if t.horizontalHeader().isVisible() else 0
+    if t.verticalHeader().length() > inner.height() - head:
+        return inner.width() - t.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, t)
+    return inner.width()
+
+
 def fit_top_columns(t, mod_col, vw=None):
     """Column widths of the Top 100 table, after resizeColumnsToContents: the Folder column takes what is left once
     Modified has room for a whole date (never cut at "16:..."); a very long file name can't push the rest out; the
-    width of the vertical scrollbar of a long table is kept free. vw: the width to fit (default: the table's own)."""
+    width of the vertical scrollbar of a long table is kept free. vw: the width to fit (default: top_width)."""
     if vw is None:
-        vw = t.viewport().width()
-        if (not t.verticalScrollBar().isVisible() and  # (a long table is about to get one)
-                t.rowCount() * t.verticalHeader().defaultSectionSize() > t.viewport().height()):
-            vw -= t.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, t)
+        vw = top_width(t)
     t.setColumnWidth(0, min(t.columnWidth(0), int(vw * 0.45)))
     mod = max(t.sizeHintForColumn(3), mod_col)  # (not columnWidth: the last column was stretched)
     room = vw - t.columnWidth(0) - t.columnWidth(1) - mod

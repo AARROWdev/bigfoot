@@ -171,6 +171,30 @@ def test_the_top_100_table_gives_the_folder_column_all_it_needs_when_it_just_fit
     bf.fit_top_columns(t, window.mod_col, vw=tight - 40)
     assert abs(t.columnWidth(2) - (f - 38)) <= 3, (t.columnWidth(2), f)
 
+def test_after_a_refill_the_width_comes_from_the_rows_not_the_stale_scrollbar(window, work):
+    h.make_tree(work, {f"file_number_{i:03d}.bin": 1000 + i for i in range(120)})
+    h.make_tree(os.path.join(work, "small"), {f"s{i}.bin": 50 + i for i in range(3)})
+    root = h.scan(window, work)
+    window.tabs.setCurrentIndex(2)
+    h.pump(150)
+    t = window.top
+    assert t.rowCount() == 100 and t.verticalScrollBar().isVisible()
+    long_width = bf.top_width(t)
+    assert long_width == t.viewport().width()  # 100 rows: the scrollbar's width is already out of it
+    small = next(d for d in root.dirs if d.name == "small")
+    window.select_in_tree(small)
+    window.set_focus(small)  # the refill: 3 rows, and no event has run since the 100
+    assert t.rowCount() == 3
+    # the situation of the bug: Qt still thinks the scrollbar is there and the viewport is the narrow one
+    assert t.verticalScrollBar().isVisible() and t.viewport().width() < t.contentsRect().width()
+    assert bf.top_width(t) == t.contentsRect().width()  # 3 rows: the whole inner width, no scrollbar
+    assert long_width == bf.top_width(t) - t.style().pixelMetric(bf.QStyle.PM_ScrollBarExtent, None, t)
+    # and the other way round: a 3-row table, then 100 rows
+    window.select_in_tree(root)
+    window.set_focus(root)
+    assert t.rowCount() == 100 and bf.top_width(t) == long_width
+
+
 def test_a_long_top_100_table_has_no_sideways_scroll_either(window, work):
     h.make_tree(work, {f"file_number_{i:03d}.bin": 1000 + i for i in range(120)})
     h.scan(window, work)
