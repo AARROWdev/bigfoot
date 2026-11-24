@@ -497,10 +497,13 @@ def kind_of(it):
     return f"{e.upper()} file" if e else "File"
 
 
-def folder_total(d):
+def folder_total(d, kids=None):
     """What a folder's contents are shares of: its size, or what its contents add up to if that is more. The boxes
-    draw their areas by it (see TreeMap._draw) and the list's "% of folder" is by it, so they agree."""
-    return max(d.size, sum(k.size for k in (*d.dirs, *d.files)))
+    draw their areas by it (see TreeMap._draw) and the list's "% of folder" is by it, so they agree. kids: the
+    contents as already read (one snapshot while a scan is adding to them)."""
+    if kids is None:
+        kids = (*d.dirs, *d.files)
+    return max(d.size, sum(k.size for k in kids))
 
 
 class ListModel(QAbstractTableModel):
@@ -512,27 +515,31 @@ class ListModel(QAbstractTableModel):
         self.sort_col, self.desc = L_SIZE, True  # kept while the user moves between folders
         self.ic_dir, self.ic_file = icons
 
-    def _key(self):
+    def _order(self, items):
+        """Sort in place: by name first, then (stable) by the chosen column, so rows that tie on it stay in name
+        order A to Z whichever way the column goes."""
         c = self.sort_col
+        items.sort(key=lambda x: x.name.lower())
         if c == L_NAME:
-            return lambda x: x.name.lower()
-        if c in (L_SIZE, L_PCT):
-            return lambda x: (x.size, x.name.lower())
-        if c == L_TYPE:
-            return lambda x: (kind_of(x).lower(), x.name.lower())
-        return lambda x: (x.mtime, x.name.lower())
+            if self.desc:
+                items.reverse()
+            return
+        key = ((lambda x: x.size) if c in (L_SIZE, L_PCT) else
+               (lambda x: kind_of(x).lower()) if c == L_TYPE else (lambda x: x.mtime))
+        items.sort(key=key, reverse=self.desc)
 
     def load(self, d):
         """Show d's contents. Returns False and changes nothing when that is exactly what is shown already (a live
         refresh that found nothing new must not redraw the list)."""
         items = [*d.dirs, *d.files] if d is not None else []
-        sig = (id(d), d.size if d is not None else 0, tuple((id(x), x.size, x.mtime) for x in items))
+        sig = (id(d), d.size if d is not None else 0,
+               tuple((id(x), x.size, x.mtime, x.is_dir and (x.denied, x.skipped)) for x in items))
         if sig == self.sig:
             return False
-        items.sort(key=self._key(), reverse=self.desc)
+        self._order(items)
         self.beginResetModel()
         self.dir, self.items, self.sig = d, items, sig
-        self.total = folder_total(d) if d is not None else 0
+        self.total = folder_total(d, items) if d is not None else 0
         self.endResetModel()
         return True
 
@@ -586,7 +593,7 @@ class ListModel(QAbstractTableModel):
         old = self.persistentIndexList()
         keep = [(self.items[i.row()], i.column()) for i in old]
         self.sort_col, self.desc = col, order == Qt.DescendingOrder
-        self.items.sort(key=self._key(), reverse=self.desc)
+        self._order(self.items)
         pos = {id(x): r for r, x in enumerate(self.items)}
         self.changePersistentIndexList(old, [self.index(pos[id(it)], c) for it, c in keep])
         self.layoutChanged.emit()
@@ -906,7 +913,7 @@ class Window(QMainWindow):
         self.view_boxes.setText("Boxes")
         self.view_list = QToolButton()
         self.view_list.setText("List")
-        grp = QButtonGroup(self)
+        grp = QButtonGroup(self)  # (makes the two buttons exclusive)
         seg = QHBoxLayout()
         seg.setSpacing(0)
         for b in (self.view_boxes, self.view_list):
@@ -914,7 +921,6 @@ class Window(QMainWindow):
             b.setAutoRaise(False)
             grp.addButton(b)
             seg.addWidget(b)
-        self.view_grp = grp
         self.view_boxes.setChecked(True)
         crumb.addLayout(seg)
         ml.addLayout(crumb)

@@ -3,8 +3,10 @@ import os
 import time
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 import bigfoot as bf
 import helpers as h
@@ -72,10 +74,15 @@ def test_both_views_show_the_same_sizes_and_percentages(listed):
     area = sum(r.width() * r.height() for r, _ in boxes)
     for r, it in boxes:
         assert abs(r.width() * r.height() / area - it.size / total) < 0.02, it.name
-    w.map.mouseMoveEvent  # (the tooltip text is built from the same human(size))
-    for _, it in boxes:
-        assert bf.human(it.size) in f"{it.path}\n{bf.human(it.size)} on disk"
-    assert cell(w, row_of(w, "z.bin"), bf.L_SIZE) == bf.human(5000)
+    # hover each box: its tooltip names the same size as the list's cell for that item
+    for r, it in boxes:
+        c = r.topLeft() + QPointF(1, 1)  # (a folder's own frame, not a file inside it)
+        QApplication.sendEvent(w.map, QMouseEvent(QEvent.MouseMove, c, w.map.mapToGlobal(c), Qt.NoButton,
+                                                  Qt.NoButton, Qt.NoModifier))
+        tip = w.map.toolTip()
+        hovered = w.map.hit(c)
+        assert hovered is it and f"{bf.human(it.size)} on disk" in tip, (it.name, tip)
+        assert cell(w, row_of(w, it.name), bf.L_SIZE) == bf.human(it.size)
 
 
 def test_the_list_sizes_are_on_disk_not_length(window, work):
@@ -105,6 +112,68 @@ def test_default_sort_is_size_descending_and_folders_are_not_forced_first(listed
     w, _ = listed
     assert names(w) == ["z.bin", "mid", "a.bin", "tiny"]
     assert w.listv.horizontalHeader().sortIndicatorSection() == bf.L_SIZE
+
+
+def test_rows_that_tie_stay_in_name_order_a_to_z_in_every_sort(window, work):
+    h.make_tree(work, {"z0.bin": 0, "b0.bin": 0, "m0.bin": 0, "k.bin": 100, "c.bin": 100, "x.bin": 500})
+    h.scan(window, work)
+    to_list(window)
+    assert names(window) == ["x.bin", "c.bin", "k.bin", "b0.bin", "m0.bin", "z0.bin"]  # size, biggest first
+    window.listv.horizontalHeader().setSortIndicator(bf.L_SIZE, Qt.AscendingOrder)
+    h.pump(30)
+    assert names(window) == ["b0.bin", "m0.bin", "z0.bin", "c.bin", "k.bin", "x.bin"]
+    window.listv.horizontalHeader().setSortIndicator(bf.L_TYPE, Qt.DescendingOrder)
+    h.pump(30)
+    assert names(window) == sorted(names(window))  # all one type: name order, A to Z
+
+
+def test_hard_link_names_listed_with_zero_are_in_name_order(window, work):
+    h.make_tree(work, {"orig.bin": 3000})
+    for n in ("zz.bin", "aa.bin", "mm.bin"):
+        os.link(os.path.join(work, "orig.bin"), os.path.join(work, n))
+    h.scan(window, work)
+    to_list(window)
+    assert names(window)[0] == "aa.bin"  # the first name by path holds the size
+    assert names(window)[1:] == ["mm.bin", "orig.bin", "zz.bin"]
+
+
+def test_a_folder_turning_skipped_or_denied_alone_redraws_its_row(listed):
+    w, root = listed
+    m = w.list_model
+    d = next(x for x in root.dirs if x.name == "tiny")
+    assert m.load(root) is False  # nothing changed
+    d.skipped = True  # same name, size and date: only the flag changed
+    assert m.load(root) is True
+    assert m.data(m.index(row_of(w, "tiny"), 0), Qt.ForegroundRole) == bf.QColor("#ff8a8a")
+    d.skipped, d.denied = False, True
+    assert m.load(root) is True
+    assert m.load(root) is False
+
+
+def test_a_stopped_scan_marks_the_unscanned_folders_in_the_list(window, work, monkeypatch):
+    for i in range(120):
+        h.make_tree(os.path.join(work, f"d{i:03d}"), {"s": {"f.bin": 1000}})
+    real = bf.Scanner._scan
+
+    def slow(self, d):
+        time.sleep(0.2)
+        real(self, d)
+    monkeypatch.setattr(bf.Scanner, "_scan", slow)
+    window.live.setInterval(100)
+    to_list(window)
+    window.path.setText(work)
+    window.scan()
+    h.wait_until(lambda: window.list_model.rowCount() > 0, 10, "the list to fill in")
+    window.scan_or_stop()  # Stop
+    h.wait_until(lambda: h.scan_finished(window), 60, "the stop")
+    h.pump(50)
+    root = window.scanner.root
+    skipped = [d for d in root.dirs if d.skipped]
+    assert skipped, "the test needs some folders left unscanned"
+    rows = {x.name: r for r, x in enumerate(window.list_model.items)}
+    red = bf.QColor("#ff8a8a")
+    for d in skipped:
+        assert window.list_model.data(window.list_model.index(rows[d.name], 0), Qt.ForegroundRole) == red
 
 
 def test_clicking_a_header_sorts_by_that_column(listed):
@@ -326,8 +395,10 @@ def test_the_list_follows_a_live_scan_without_flicker(window, work, monkeypatch)
     window.live.timeout.connect(lambda: ticks.append(1))
     window.path.setText(work)
     window.scan()
-    h.pump(300)
+    h.wait_until(lambda: window.list_model.rowCount() > 0 or h.scan_finished(window), 10,
+                 "the list to fill in as it scans")
     assert window.list_model.rowCount() > 0, "the list should fill in as it scans"
+    assert not h.scan_finished(window), "the test needs the scan to still be running"
     picked = None
     if window.list_model.items:
         picked = window.list_model.items[0]

@@ -9,8 +9,9 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 function Check($name, $ok) { "$(if ($ok) {'PASS'} else {'FAIL'})  $name" | Add-Content $sum }
 function Log($m) { "$(Get-Date -Format HH:mm:ss)  $m" | Add-Content "$out\progress.log" }
 
-$setup = Get-ChildItem C:\bigfoot\dist\BigfootSetup-*.exe | Sort-Object LastWriteTime | Select-Object -Last 1
-$oldSetup = 'C:\old\BigfootSetup-1.1.exe'
+$ver = [regex]::Match((Get-Content C:\bigfoot\bigfoot.py -Raw), 'VERSION = "([^"]+)"').Groups[1].Value
+$setup = Get-Item "C:\bigfoot\dist\BigfootSetup-$ver.exe"  # (the build of this code, never an older one left in dist)
+$oldSetup = 'C:\old\BigfootSetup-1.2.exe'
 $app = "$env:ProgramFiles\Bigfoot"
 $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{3484C9CA-B551-4A47-A264-7723F3745472}_is1'
 $lnk = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Bigfoot.lnk"
@@ -25,7 +26,7 @@ if (-not $NoInstall) {
     Check 'A2 desktop shortcut created' (Test-Path $desk)
     Check 'A1 Start Menu shortcut' (Test-Path $lnk)
     Check 'A1 Add/Remove Programs entry' (Test-Path $key)
-    Check 'A1 version 1.2 registered' ((Get-ItemProperty $key).DisplayVersion -eq '1.2')
+    Check 'A1 version 1.2.1 registered' ((Get-ItemProperty $key).DisplayVersion -eq '1.2.1')
 
     Log 'A4: uninstall, then A3: install the older version and upgrade over it'
     Start-Process "$app\unins000.exe" $silent -Wait
@@ -34,11 +35,11 @@ if (-not $NoInstall) {
     Check 'A4 uninstall removes the desktop shortcut' (-not (Test-Path $desk))
     Check 'A4 uninstall keeps the user settings' (Test-Path 'HKCU:\Software\Bigfoot\Bigfoot')
     $p = Start-Process $oldSetup ($silent + "/LOG=$out\old-install.log") -Wait -PassThru
-    Check "A3 older version installs (exit $($p.ExitCode))" ($p.ExitCode -eq 0 -and (Get-ItemProperty $key).DisplayVersion -eq '1.1')
+    Check "A3 older version installs (exit $($p.ExitCode))" ($p.ExitCode -eq 0 -and (Get-ItemProperty $key).DisplayVersion -eq '1.2')
     $p = Start-Process $setup.FullName ($silent + "/LOG=$out\upgrade-old.log") -Wait -PassThru
-    Check "A3 upgrade from 1.1 (exit $($p.ExitCode))" ($p.ExitCode -eq 0 -and (Get-ItemProperty $key).DisplayVersion -eq '1.2')
-    & $py C:\bigfoot\tests\sandbox\blackbox.py title "$app\Bigfoot.exe" 'Bigfoot 1.2'
-    Check 'A3 the upgraded app is 1.2 (window title)' ($LASTEXITCODE -eq 0)
+    Check "A3 upgrade from 1.2 (exit $($p.ExitCode))" ($p.ExitCode -eq 0 -and (Get-ItemProperty $key).DisplayVersion -eq '1.2.1')
+    & $py C:\bigfoot\tests\sandbox\blackbox.py title "$app\Bigfoot.exe" 'Bigfoot 1.2.1'
+    Check 'A3 the upgraded app is 1.2.1 (window title)' ($LASTEXITCODE -eq 0)
     Check 'A3 only one uninstaller entry' ((Get-ChildItem $app -Filter 'unins*.exe').Count -eq 1)
 
     Log 'A3: upgrade while Bigfoot runs'
