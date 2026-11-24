@@ -3,7 +3,7 @@
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="docs/hero-light.svg">
-      <img alt="Bigfoot. Find what's eating your disk. A fast disk space analyzer for Windows: 1,000,000 files scanned in 16 seconds, a treemap of every folder, and it never deletes a file for good while saying it was recycled." src="docs/hero-dark.svg" width="100%">
+      <img alt="Bigfoot. Find what's eating your disk. A disk space analyzer for Windows: a treemap of every folder, a plain list view, the real size on disk, and it never deletes a file for good while saying it was recycled." src="docs/hero-dark.svg" width="100%">
     </picture>
   </a>
 </p>
@@ -11,6 +11,8 @@
 # Bigfoot
 
 **Download: [latest release](https://github.com/AARROWdev/bigfoot/releases/latest)** (Windows 10/11, 64-bit)
+
+Find what's eating your disk. Bigfoot is a disk space analyzer for Windows that shows where your space goes at a glance: a treemap of every folder, a plain list view, real size on disk, and it never deletes a file for good.
 
 Point it at a drive or folder and it shows where the space went: a biggest-first tree, a treemap, a breakdown by file type and the 100 biggest files. Select what you don't need and send it to the Recycle Bin; the totals update on the spot.
 
@@ -30,7 +32,7 @@ The app isn't code-signed yet, so Windows may show "Windows protected your PC": 
 **Uninstall:** Settings > Apps > Bigfoot > Uninstall (portable: delete the folder). Your settings stay in the registry (`HKCU\Software\Bigfoot`); delete that key to remove them too.
 
 ## What it does
-- **Fast scan** of any drive, folder or network share: multi-threaded, live progress, and the tree fills in while it scans
+- **Scans** any drive, folder or network share: multi-threaded, with live progress, and the tree fills in while it scans
 - **Biggest-first tree:** size on disk, % of drive bar, files, folders, newest modified date. Click any column to sort.
 - **Map:** a squarified treemap of the selected folder, colored by file type. Click to find it in the tree, double-click a folder to zoom in, right-click or Up to zoom out.
 - **Boxes | List:** the switch above the map shows the selected folder as boxes or as a list (name, size on disk, % of the folder, type, modified; folders and files together, biggest first, click a header to sort). Double-click a folder to open it, a file to open it with its app; right-click gives the same menu as everywhere else. Bigfoot remembers which one you used.
@@ -56,7 +58,7 @@ Bigfoot ranks and totals the space a file occupies on the drive, not the length 
 - **Cloud placeholders** (OneDrive "online-only" files) count 0 and are never opened, so a scan can't make them download.
 - **Hard links** (the same file under several names, as in WinSxS) count once. The first name by path takes the size; the other names are listed with 0.
 
-The columns say "Size on disk". The one place Bigfoot goes by a file's length is the Recycle Bin check below, because that is what Windows compares with the bin's size. Telling hard links apart takes one attribute lookup per file (never a read), which costs some scan time on a drive with millions of files.
+The columns say "Size on disk". The one place Bigfoot goes by a file's length is the Recycle Bin check below, because that is what Windows compares with the bin's size. Telling hard links apart takes one attribute lookup per file (never a read), which adds some scan time on a drive with millions of files (see the numbers below).
 
 ## The part worth reading: delete means recycle
 A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTrash` (like the shell call underneath it) will quietly delete a file permanently and still report success when the Recycle Bin can't take it. Bigfoot checks before it sends anything, and refuses with a reason instead:
@@ -68,15 +70,15 @@ A disk cleaner's worst bug is deleting something for good. Qt's `QFile.moveToTra
 - **Names Windows can't recycle:** trailing dots or spaces, unpaired surrogates, device names like `CON`, `NUL.txt`, `COM1`
 
 ## Tested in a throwaway Windows
-`tests/` holds 432 automated tests that run inside a fresh Windows Sandbox (429 of them; the other 3 need a virtual disk, which the Sandbox can't mount), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
+`tests/` holds 500 automated tests that run inside a fresh Windows Sandbox (495 of them; the other 5 are skipped there: 3 need a virtual disk, which the Sandbox can't mount, and 2 check the headless test setting, which the Sandbox doesn't use), so nothing on a real PC is touched. Installer and black-box checks run against the **installed** app: install, upgrade (including while Bigfoot is running), uninstall. The app tests scan generated trees and check every total against `os.walk`, and recycle into the real Recycle Bin, restore and compare byte for byte. The UI is driven with Qt events, and a random click-and-key monkey test (4,500 steps a run) runs with a watchdog that fails if the window stops responding for 2 seconds.
 
-Release bar: all 429 pass **3 full runs in a row** on the release code. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
+Release bar: all 495 pass **3 full runs in a row** on the release code. Getting there found 10 real bugs, among them 2 that deleted files for good and 2 that stopped the app from opening, all fixed and covered by a test.
 
 | Measured in the Sandbox | |
 |---|---|
-| 1,000,000 files | about 16 s, +60 MB |
-| The whole C: drive | about 15 s |
-| Worst window freeze during a big scan | under 0.5 s |
+| 1,000,000 files | 17 to 20 s, +13 MB |
+| The whole C: drive | 72 to 258 s (3 runs: 72, 258, 74) |
+| Worst window freeze during a big scan | under 0.4 s |
 
 ## Build
 ```
@@ -95,5 +97,5 @@ Python and PySide6 (Qt 6), one 1,500-line file. Built with [Claude Code](https:/
 [MIT](LICENSE)
 
 ## Later
-- NTFS master file table reader (whole-drive scans in seconds, needs admin)
+- NTFS master file table reader (reads the drive's file table directly, needs admin)
 - Mac version

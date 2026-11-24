@@ -2,10 +2,10 @@
 <rect width="960" height="320" rx="16" fill="#101418"/>
 <rect x="680" y="40" width="140" height="96" rx="4" fill="#e8a33d" opacity="0.85"/><rect x="824" y="40" width="96" height="58" rx="4" fill="#4f8fd6" opacity="0.85"/><rect x="824" y="102" width="96" height="34" rx="4" fill="#59b36b" opacity="0.85"/><rect x="680" y="140" width="70" height="40" rx="4" fill="#c45c8a" opacity="0.85"/><rect x="754" y="140" width="166" height="40" rx="4" fill="#8a6fd1" opacity="0.85"/>
 <text x="40" y="96" font-size="56" font-weight="800" fill="#ffffff">Bigfoot</text>
-<text x="40" y="136" font-size="22" fill="#9aa4b2">Find what's eating your disk.</text><text x="40" y="166" font-size="18" fill="#9aa4b2">A fast disk space analyzer for Windows.</text>
+<text x="40" y="136" font-size="22" fill="#9aa4b2">Find what's eating your disk.</text><text x="40" y="166" font-size="18" fill="#9aa4b2">A disk space analyzer for Windows.</text>
 <rect x="40" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
-<text x="60" y="240" font-size="26" font-weight="700" fill="#f2c14e">1,000,000 files</text>
-<text x="60" y="272" font-size="16" fill="#9aa4b2">scanned in 16 s</text><rect x="340" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
+<text x="60" y="240" font-size="26" font-weight="700" fill="#f2c14e">Size on disk</text>
+<text x="60" y="272" font-size="16" fill="#9aa4b2">not the length a file claims</text><rect x="340" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
 <text x="360" y="240" font-size="26" font-weight="700" fill="#f2c14e">Treemap</text>
 <text x="360" y="272" font-size="16" fill="#9aa4b2">every folder sized at a glance</text><rect x="640" y="200" width="280" height="96" rx="12" fill="#161c22" stroke="#2a323c"/>
 <text x="660" y="240" font-size="26" font-weight="700" fill="#f2c14e">0 silent deletes</text>
